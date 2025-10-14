@@ -1,3 +1,9 @@
+
+import torch
+import numpy as np
+from numpy.polynomial.legendre import leggauss
+import logging
+from typing import Dict, Any, Optional
 """
 Precomputation module for Heston-Nandi option pricing.
 
