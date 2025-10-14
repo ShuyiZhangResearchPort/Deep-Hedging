@@ -1,1 +1,263 @@
+# --------------------------------------------------------------------------
+# Precomputation Functions
+# --------------------------------------------------------------------------
+def precompute_hn_coefficients(N, r_daily, omega, alpha, beta, gamma, lambda_,
+                                N_quad=128, u_max=100.0, device="cpu"):
+    """
+    Precompute Heston-Nandi characteristic function coefficients - VECTORIZED.
+    """
+    device_t = torch.device(device)
+    u_nodes, w_nodes = leggauss(N_quad)
+    u_nodes = 0.5 * (u_nodes + 1) * u_max
+    w_nodes = 0.5 * u_max * w_nodes
 
+    u_nodes_t = torch.tensor(u_nodes, dtype=torch.float64, device=device_t)
+    w_nodes_t = torch.tensor(w_nodes, dtype=torch.float64, device=device_t)
+
+    omega_c = torch.tensor(omega, dtype=torch.complex128, device=device_t)
+    alpha_c = torch.tensor(alpha, dtype=torch.complex128, device=device_t)
+    beta_c = torch.tensor(beta, dtype=torch.complex128, device=device_t)
+    gamma_c = torch.tensor(gamma, dtype=torch.complex128, device=device_t)
+    lambda_c = torch.tensor(lambda_, dtype=torch.complex128, device=device_t)
+    r_daily_c = torch.tensor(r_daily, dtype=torch.complex128, device=device_t)
+
+    coefficients = torch.zeros((N+1, N_quad, 2, 3), dtype=torch.complex128, device=device_t)
+
+    lambda_r = torch.tensor(-0.5, dtype=torch.complex128, device=device_t)
+    gamma_r = gamma_c + lambda_c + 0.5
+    denom_sigma = 1.0 - beta_c - alpha_c * gamma_r**2
+    sigma2 = (omega_c + alpha_c) / denom_sigma
+
+    # Vectorize over quadrature nodes
+    u_vec = torch.tensor(u_nodes, dtype=torch.complex128, device=device_t)
+    cphi0_vec = 1j * u_vec  # [N_quad]
+
+    for n in range(N+1):
+        Time_inDays = N - n
+
+        # Process const=1.0 and const=0.0 separately but vectorize over N_quad
+        for const_idx, const_val in enumerate([1.0, 0.0]):
+            const_c = torch.tensor(const_val, dtype=torch.complex128, device=device_t)
+            cphi_vec = cphi0_vec + const_c  # [N_quad]
+
+            # Initialize for all quadrature nodes at once
+            a_vec = cphi_vec * r_daily_c  # [N_quad]
+            b_vec = lambda_r * cphi_vec + 0.5 * cphi_vec**2  # [N_quad]
+
+            # Recursive calculation vectorized over N_quad
+            for i in range(1, Time_inDays):
+                denom_vec = 1.0 - 2.0 * alpha_c * b_vec
+                a_vec = a_vec + cphi_vec * r_daily_c + b_vec * omega_c - 0.5 * torch.log(denom_vec)
+                b_vec = (cphi_vec * (lambda_r + gamma_r) - 0.5 * gamma_r**2 +
+                         beta_c * b_vec + 0.5 * (cphi_vec - gamma_r)**2 / denom_vec)
+
+            # Store results
+            coefficients[n, :, const_idx, 0] = -cphi0_vec
+            coefficients[n, :, const_idx, 1] = cphi_vec
+            coefficients[n, :, const_idx, 2] = a_vec + b_vec * sigma2
+
+    return {
+        "coefficients": coefficients,
+        "u_nodes": u_nodes_t,
+        "w_nodes": w_nodes_t,
+        "N": N,
+        "r_daily": r_daily,
+        "device": device
+    }
+
+
+def price_option_precomputed(S, K, step_idx, r_daily, N, option_type, precomputed_data):
+    """
+    Price option using precomputed coefficients.
+    """
+    device = torch.device(precomputed_data["device"])
+    coefficients = precomputed_data["coefficients"]
+    u_nodes = precomputed_data["u_nodes"]
+    w_nodes = precomputed_data["w_nodes"]
+
+    # Convert to float64 for precision
+    S_t = torch.as_tensor(S, dtype=torch.float64, device=device)
+    K_t = torch.as_tensor(K, dtype=torch.float64, device=device)
+
+    shape = torch.broadcast_shapes(S_t.shape, K_t.shape)
+    S_bc = S_t.expand(shape) if S_t.shape != shape else S_t
+    K_bc = K_t.expand(shape) if K_t.shape != shape else K_t
+
+    log_S = torch.log(S_bc)
+    log_K = torch.log(K_bc)
+
+    # Get precomputed coefficients: [N_quad, 2, 3]
+    coeff_step = coefficients[step_idx]
+
+    # Compute characteristic functions for const=1
+    coeff_K_1 = coeff_step[:, 0, 0]
+    coeff_S_1 = coeff_step[:, 0, 1]
+    const_term_1 = coeff_step[:, 0, 2]
+
+    exponent_1 = (coeff_K_1.unsqueeze(-1) * log_K.unsqueeze(0) +
+                  coeff_S_1.unsqueeze(-1) * log_S.unsqueeze(0) +
+                  const_term_1.unsqueeze(-1))
+
+    cphi0_1 = 1j * u_nodes
+    f1 = torch.exp(exponent_1) / cphi0_1.unsqueeze(-1) / np.pi
+
+    # Compute characteristic functions for const=0
+    coeff_K_0 = coeff_step[:, 1, 0]
+    coeff_S_0 = coeff_step[:, 1, 1]
+    const_term_0 = coeff_step[:, 1, 2]
+
+    exponent_0 = (coeff_K_0.unsqueeze(-1) * log_K.unsqueeze(0) +
+                  coeff_S_0.unsqueeze(-1) * log_S.unsqueeze(0) +
+                  const_term_0.unsqueeze(-1))
+
+    cphi0_0 = 1j * u_nodes
+    f0 = torch.exp(exponent_0) / cphi0_0.unsqueeze(-1) / np.pi
+
+    # Compute integrands
+    integrand1 = torch.real(f1)
+    integrand2 = torch.real(f0)
+
+    # Integrate
+    call1 = torch.sum(w_nodes.unsqueeze(-1) * integrand1, dim=0)
+    call2 = torch.sum(w_nodes.unsqueeze(-1) * integrand2, dim=0)
+
+    # Discount factor
+    Time_inDays = float(N - step_idx)
+    disc = torch.exp(torch.tensor(-r_daily * Time_inDays, dtype=torch.float64, device=device))
+
+    # Heston-Nandi pricing formula
+    call_price = S_bc * 0.5 + disc * call1 - K_bc * disc * (0.5 + call2)
+
+    if option_type == "call":
+        return call_price.to(torch.float32)
+    elif option_type == "put":
+        return (call_price - S_bc + K_bc * disc).to(torch.float32)
+    else:
+        raise ValueError("option_type must be 'call' or 'put'")
+
+
+def delta_precomputed_analytical(S, K, step_idx, r_daily, N, option_type, precomputed_data):
+    """
+    Compute delta analytically using precomputed coefficients.
+    Delta = d(Price)/dS using the characteristic function formula directly.
+    """
+    device = torch.device(precomputed_data["device"])
+    coefficients = precomputed_data["coefficients"]
+    u_nodes = precomputed_data["u_nodes"]
+    w_nodes = precomputed_data["w_nodes"]
+
+    S_t = torch.as_tensor(S, dtype=torch.float64, device=device)
+    K_t = torch.as_tensor(K, dtype=torch.float64, device=device)
+
+    shape = torch.broadcast_shapes(S_t.shape, K_t.shape)
+    S_bc = S_t.expand(shape) if S_t.shape != shape else S_t
+    K_bc = K_t.expand(shape) if K_t.shape != shape else K_t
+
+    log_S = torch.log(S_bc)
+    log_K = torch.log(K_bc)
+
+    coeff_step = coefficients[step_idx]
+
+    # For const=1
+    coeff_K_1 = coeff_step[:, 0, 0]
+    coeff_S_1 = coeff_step[:, 0, 1]
+    const_term_1 = coeff_step[:, 0, 2]
+
+    exponent_1 = (coeff_K_1.unsqueeze(-1) * log_K.unsqueeze(0) +
+                  coeff_S_1.unsqueeze(-1) * log_S.unsqueeze(0) +
+                  const_term_1.unsqueeze(-1))
+
+    cphi0_1 = 1j * u_nodes
+    f1 = torch.exp(exponent_1) / cphi0_1.unsqueeze(-1) / np.pi
+
+    # Derivative: d/dS of exp(...) = exp(...) * coeff_S / S
+    df1_dS = f1 * coeff_S_1.unsqueeze(-1) / S_bc.unsqueeze(0)
+
+    # For const=0
+    coeff_K_0 = coeff_step[:, 1, 0]
+    coeff_S_0 = coeff_step[:, 1, 1]
+    const_term_0 = coeff_step[:, 1, 2]
+
+    exponent_0 = (coeff_K_0.unsqueeze(-1) * log_K.unsqueeze(0) +
+                  coeff_S_0.unsqueeze(-1) * log_S.unsqueeze(0) +
+                  const_term_0.unsqueeze(-1))
+
+    cphi0_0 = 1j * u_nodes
+    f0 = torch.exp(exponent_0) / cphi0_0.unsqueeze(-1) / np.pi
+
+    df0_dS = f0 * coeff_S_0.unsqueeze(-1) / S_bc.unsqueeze(0)
+
+    # Integrate derivatives
+    delta1 = torch.sum(w_nodes.unsqueeze(-1) * torch.real(df1_dS), dim=0)
+    delta2 = torch.sum(w_nodes.unsqueeze(-1) * torch.real(df0_dS), dim=0)
+
+    Time_inDays = float(N - step_idx)
+    disc = torch.exp(torch.tensor(-r_daily * Time_inDays, dtype=torch.float64, device=device))
+
+    # Delta formula: dC/dS = 0.5 + disc * delta1 - K * disc * delta2
+    delta_call = 0.5 + disc * delta1 - K_bc * disc * delta2
+
+    if option_type == "call":
+        return delta_call.to(torch.float32)
+    elif option_type == "put":
+        return (delta_call - 1.0).to(torch.float32)
+    else:
+        raise ValueError("option_type must be 'call' or 'put'")
+  # -------------------------------
+# Scalar function
+@jit(nopython=True, cache=True)
+def _fstar_hn_scalar(phi, const, S, X, Time_inDays, r_daily, omega, alpha, beta, gamma, lambda_):
+    cphi0 = 1j * phi
+    cphi = cphi0 + const
+    lambda_r = -0.5
+    gamma_r = gamma + lambda_ + 0.5
+    sigma2 = (omega + alpha) / (1 - beta - alpha * gamma_r**2)
+
+    a = cphi * r_daily
+    b = lambda_r * cphi + 0.5 * cphi**2
+
+    for i in range(1, int(Time_inDays)):
+        denom = 1 - 2 * alpha * b
+        a = a + cphi * r_daily + b * omega - 0.5 * np.log(denom)
+        b = cphi * (lambda_r + gamma_r) - 0.5 * gamma_r**2 + beta * b + 0.5 * (cphi - gamma_r)**2 / denom
+
+    result = np.exp(-cphi0 * np.log(X) + cphi * np.log(S) + a + b * sigma2) / cphi0 / np.pi
+    return result.real
+
+# -------------------------------
+# Vectorized version
+@jit(nopython=True, parallel=True, cache=True)
+def _fstar_hn_vectorized(phi, const, S_flat, X_flat, Time_flat, r_flat, omega, alpha, beta, gamma, lambda_, n_elements):
+    result = np.empty(n_elements, dtype=np.float64)
+    for idx in prange(n_elements):
+        result[idx] = _fstar_hn_scalar(phi, const, S_flat[idx], X_flat[idx], Time_flat[idx], r_flat[idx], omega, alpha, beta, gamma, lambda_)
+    return result
+
+# -------------------------------
+# Complex scalar
+@jit(nopython=True, cache=True)
+def _f_hn_scalar(phi, const, S, X, Time_inDays, r_daily, omega, alpha, beta, gamma, lambda_):
+    cphi0 = 1j * phi
+    cphi = cphi0 + const
+    lambda_r = -0.5
+    gamma_r = gamma + lambda_ + 0.5
+    sigma2 = (omega + alpha) / (1 - beta - alpha * gamma_r**2)
+
+    a = cphi * r_daily
+    b = lambda_r * cphi + 0.5 * cphi**2
+
+    for i in range(1, int(Time_inDays)):
+        denom = 1 - 2 * alpha * b
+        a = a + cphi * r_daily + b * omega - 0.5 * np.log(denom)
+        b = cphi * (lambda_r + gamma_r) - 0.5 * gamma_r**2 + beta * b + 0.5 * (cphi - gamma_r)**2 / denom
+
+    return np.exp(-cphi0 * np.log(X) + cphi * np.log(S) + a + b * sigma2) / cphi0 / np.pi
+
+# -------------------------------
+# Vectorized complex
+@jit(nopython=True, parallel=True, cache=True)
+def _f_hn_vectorized(phi, const, S_flat, X_flat, Time_flat, r_flat, omega, alpha, beta, gamma, lambda_, n_elements):
+    result = np.empty(n_elements, dtype=np.complex128)
+    for idx in prange(n_elements):
+        result[idx] = _f_hn_scalar(phi, const, S_flat[idx], X_flat[idx], Time_flat[idx], r_flat[idx], omega, alpha, beta, gamma, lambda_)
+    return result
