@@ -2,6 +2,75 @@ import torch
 import numpy as np
 import numpy as np
 from numba import jit, prange
+def price_option_precomputed(S, K, step_idx, r_daily, N, option_type, precomputed_data):
+    """
+    Price option using precomputed coefficients.
+    """
+    device = torch.device(precomputed_data["device"])
+    coefficients = precomputed_data["coefficients"]
+    u_nodes = precomputed_data["u_nodes"]
+    w_nodes = precomputed_data["w_nodes"]
+
+    # Convert to float64 for precision
+    S_t = torch.as_tensor(S, dtype=torch.float64, device=device)
+    K_t = torch.as_tensor(K, dtype=torch.float64, device=device)
+
+    shape = torch.broadcast_shapes(S_t.shape, K_t.shape)
+    S_bc = S_t.expand(shape) if S_t.shape != shape else S_t
+    K_bc = K_t.expand(shape) if K_t.shape != shape else K_t
+
+    log_S = torch.log(S_bc)
+    log_K = torch.log(K_bc)
+
+    # Get precomputed coefficients: [N_quad, 2, 3]
+    coeff_step = coefficients[step_idx]
+
+    # Compute characteristic functions for const=1
+    coeff_K_1 = coeff_step[:, 0, 0]
+    coeff_S_1 = coeff_step[:, 0, 1]
+    const_term_1 = coeff_step[:, 0, 2]
+
+    exponent_1 = (coeff_K_1.unsqueeze(-1) * log_K.unsqueeze(0) +
+                  coeff_S_1.unsqueeze(-1) * log_S.unsqueeze(0) +
+                  const_term_1.unsqueeze(-1))
+
+    cphi0_1 = 1j * u_nodes
+    f1 = torch.exp(exponent_1) / cphi0_1.unsqueeze(-1) / np.pi
+
+    # Compute characteristic functions for const=0
+    coeff_K_0 = coeff_step[:, 1, 0]
+    coeff_S_0 = coeff_step[:, 1, 1]
+    const_term_0 = coeff_step[:, 1, 2]
+
+    exponent_0 = (coeff_K_0.unsqueeze(-1) * log_K.unsqueeze(0) +
+                  coeff_S_0.unsqueeze(-1) * log_S.unsqueeze(0) +
+                  const_term_0.unsqueeze(-1))
+
+    cphi0_0 = 1j * u_nodes
+    f0 = torch.exp(exponent_0) / cphi0_0.unsqueeze(-1) / np.pi
+
+    # Compute integrands
+    integrand1 = torch.real(f1)
+    integrand2 = torch.real(f0)
+
+    # Integrate
+    call1 = torch.sum(w_nodes.unsqueeze(-1) * integrand1, dim=0)
+    call2 = torch.sum(w_nodes.unsqueeze(-1) * integrand2, dim=0)
+
+    # Discount factor
+    Time_inDays = float(N - step_idx)
+    disc = torch.exp(torch.tensor(-r_daily * Time_inDays, dtype=torch.float64, device=device))
+
+    # Heston-Nandi pricing formula
+    call_price = S_bc * 0.5 + disc * call1 - K_bc * disc * (0.5 + call2)
+
+    if option_type == "call":
+        return call_price.to(torch.float32)
+    elif option_type == "put":
+        return (call_price - S_bc + K_bc * disc).to(torch.float32)
+    else:
+        raise ValueError("option_type must be 'call' or 'put'")
+
 def gamma_precomputed_analytical(
     S,
     K,
