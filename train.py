@@ -17,7 +17,7 @@ from typing import Dict, Any
 # Import your existing modules
 from src.agents.policy_net_garch import PolicyNetGARCH, HedgingEnvGARCH
 from src.option_greek.precompute import create_precomputation_manager_from_config
-src.simulation.hedging_sim import HedgingSim  # Adjust import path
+from src.simulation.hedging_sim import HedgingSim  # Adjust import path
 
 
 def setup_logging(config: Dict[str, Any]) -> None:
