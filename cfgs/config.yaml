@@ -1,2 +1,39 @@
-agent:
+training:
+  learning_rate: 0.0001
+  batch_size: 1000
+  num_epochs: 400
+  weight_decay: 0.00001
+  optimizer: "Adam"
+  episodes: 375
+  seed: 5
+  perturb_scale: 0.0
 
+garch:
+  omega: 1.593749e-07
+  alpha: 2.308475e-06
+  beta: 0.689984
+  gamma: 342.870019
+  lambda: 0.420499
+  sigma0: 0.127037
+
+instruments:
+  n_hedging_instruments: 3
+  strikes: [85, 105]
+  types: ["call", "call"]
+  maturities: [252, 378, 504]
+
+simulation:
+  S0: 100
+  K: 100
+  option_type: "call"
+  side: "short"
+  contract_size: 1
+  M: 1000
+  N: 252
+  TCP: 0.0
+
+model:
+  input_size: 5
+  hidden_size: 128
+  num_layers: 2
+  output_size: 1
