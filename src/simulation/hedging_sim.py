@@ -28,7 +28,7 @@ import importlib
 importlib.reload(hn_utils)  # reload if you edited it
 
 # Step 3: Import the functions
-from hn_utils import _fstar_hn_scalar, _fstar_hn_vectorized, _f_hn_scalar, _f_hn_vectorized
+from src.option_greek.pricing import _fstar_hn_scalar, _fstar_hn_vectorized, _f_hn_scalar, _f_hn_vectorized
 
 # Test
 
