@@ -1,3 +1,18 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import numpy as np
+import matplotlib.pyplot as plt
+import logging
+from typing import Dict, Any, Optional
+
+# Your option pricing functions (adjust path as needed)
+from src.option_greek.pricing import (
+    price_option_precomputed,
+    delta_precomputed_analytical,
+    gamma_precomputed_analytical,
+    vega_precomputed_analytical
+)
 class PolicyNetGARCH(nn.Module):
     def __init__(self, obs_dim=5, hidden_size=128, n_hedging_instruments=2, num_layers=2):
         super().__init__()
