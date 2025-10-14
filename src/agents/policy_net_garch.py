@@ -7,7 +7,7 @@ import logging
 from typing import Dict, Any, Optional
 
 # Your option pricing functions (adjust path as needed)
-from src.option_greek.pricing import (
+from src.option_greek.precompute import (
     price_option_precomputed,
     delta_precomputed_analytical,
     gamma_precomputed_analytical,
