@@ -6,7 +6,7 @@ training:
   weight_decay: 0.00001
   optimizer: "AdamW" # drop-in optimizers include: RAdam, AdaBelief
   episodes: 375
-  seed: 78
+  seed: 780203
   gamma: 0.9999
   entropy_coefficient: 0.5
   device: "cpu"
@@ -76,4 +76,4 @@ output:
   checkpoint_path: "policy_net_mc_garch_lstm_{n_inst}inst.pth"
   plot_save_path: "hedge_comparison_{n_inst}inst_ep{episode}.png"
   plot_dpi: 150
-  sample_path_index: 4  # Which path to plot for visualization
+  sample_path_index: 1 # Which path to plot for visualization
