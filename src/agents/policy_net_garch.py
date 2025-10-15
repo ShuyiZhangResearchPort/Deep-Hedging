@@ -13,6 +13,10 @@ from src.option_greek.pricing import (
     gamma_precomputed_analytical,
     vega_precomputed_analytical
 )
+
+logger = logging.getLogger(__name__)
+
+
 class PolicyNetGARCH(nn.Module):
     def __init__(self, obs_dim=5, hidden_size=128, n_hedging_instruments=2, num_layers=2):
         super().__init__()
@@ -275,7 +279,7 @@ class HedgingEnvGARCH:
 
         # Build b vector: [M, N+1, n]
         b = torch.stack([-portfolio_greeks[g] for g in greek_names], dim=-1)
-        print(f"b: {b[0, 0, :]}")
+
         # Compute condition number for monitoring
         condition_numbers = torch.linalg.cond(A)
         max_cond = condition_numbers.max().item()
@@ -311,14 +315,6 @@ class HedgingEnvGARCH:
         # Solve (ATA + λI) x = ATb
         x = torch.linalg.solve(ATA + lambda_ * I, ATb)  # [M, N+1, n_instr, 1]
         x = x.squeeze(-1)  # [M, N+1, n_instr]
-        try:
-            x = torch.linalg.solve(A, b)  # [M, N+1, n]
-            print(f"first path: {x[0]}")
-        except RuntimeError as e:
-            logger.error(f"Matrix inversion failed: {e}. Using delta-only fallback.")
-            x = torch.zeros((M, N_plus_1, n), device=self.device)
-            x[:, :, 0] = -portfolio_greeks['delta']
-            return x
 
         # Handle ill-conditioned matrices
         singular_mask = condition_numbers > 1e6
@@ -383,9 +379,11 @@ class HedgingEnvGARCH:
         obs_t[:, 0, 4] = self.side * V0
         obs_list.append(obs_t)
 
-        # Get initial positions from policy
+        # Get initial positions from policy - FIXED
         lstm_out, hidden_state = policy_net.lstm(obs_t)
-        x = F.relu(policy_net.fc1(lstm_out))
+        x = lstm_out
+        for fc in policy_net.fc_layers:
+            x = F.relu(fc(x))
 
         outputs = []
         for i, head in enumerate(policy_net.instrument_heads):
@@ -441,8 +439,11 @@ class HedgingEnvGARCH:
             obs_new[:, 0, 4] = self.side * V_t
             obs_list.append(obs_new)
 
+            # Get new positions - FIXED
             lstm_out, hidden_state = policy_net.lstm(obs_new, hidden_state)
-            x = F.relu(policy_net.fc1(lstm_out))
+            x = lstm_out
+            for fc in policy_net.fc_layers:
+                x = F.relu(fc(x))
 
             outputs = []
             for i, head in enumerate(policy_net.instrument_heads):
@@ -551,326 +552,3 @@ class HedgingEnvGARCH:
         }
 
         return terminal_error, trajectories
-
-
-# --------------------------------------------------------------------------
-# Training Loop
-# --------------------------------------------------------------------------
-def train_garch(
-    HedgingSim,
-    PolicyNetClass,
-    HedgingEnvClass,
-    episodes=100,
-    gamma=0.9999,
-    actor_lr=1e-4,
-    weight_decay=1e-6,
-    ent_coef=0.5,
-    seed=5,
-    device="cpu",
-    n_hedging_instruments=2,
-    perturb_scale=0.0,
-    instrument_strikes=None,
-    instrument_types=None,
-):
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    device_t = torch.device(device)
-
-    garch_params = {
-        "omega": 1.593749e-07,
-        "alpha": 2.308475e-06,
-        "beta": 0.689984,
-        "gamma": 342.870019,
-        "lambda": 0.420499,
-        "sigma0": 0.127037,
-    }
-
-    logger.info("Precomputing characteristic functions for all required maturities...")
-
-    # Precompute for 1-year option (252 days)
-    precomputed_data_1yr = precompute_hn_coefficients(
-        N=252, r_daily=0.04 / 252,
-        omega=garch_params["omega"], alpha=garch_params["alpha"],
-        beta=garch_params["beta"], gamma=garch_params["gamma"],
-        lambda_=garch_params["lambda"],
-        N_quad=128, u_max=100.0, device=device
-    )
-
-    # Precompute for 1.5-year option (378 days) if needed
-    precomputed_data_1_5yr = None
-    if n_hedging_instruments >= 3:
-        precomputed_data_1_5yr = precompute_hn_coefficients(
-            N=378, r_daily=0.04 / 252,
-            omega=garch_params["omega"], alpha=garch_params["alpha"],
-            beta=garch_params["beta"], gamma=garch_params["gamma"],
-            lambda_=garch_params["lambda"],
-            N_quad=128, u_max=100.0, device=device
-        )
-
-    # Precompute for 2-year option (504 days)
-    precomputed_data_2yr = precompute_hn_coefficients(
-        N=504, r_daily=0.04 / 252,
-        omega=garch_params["omega"], alpha=garch_params["alpha"],
-        beta=garch_params["beta"], gamma=garch_params["gamma"],
-        lambda_=garch_params["lambda"],
-        N_quad=128, u_max=100.0, device=device
-    )
-
-    logger.info("Precomputation complete.")
-
-    policy_net = PolicyNetClass(
-        obs_dim=5, hidden_size=128,
-        n_hedging_instruments=n_hedging_instruments
-    ).to(device_t)
-    opt = torch.optim.AdamW(policy_net.parameters(), lr=actor_lr, weight_decay=weight_decay)
-
-    logger.info("Starting training_garch: episodes=%d, n_hedging_instruments=%d, device=%s",
-                episodes, n_hedging_instruments, device)
-
-    for episode in range(1, episodes + 1):
-        print(f"episode: {episode}")
-        sim = HedgingSim(
-            S0=100, K=100, m=0.1, r=0.04, sigma=0.127037, T=1.0,
-            option_type="call", position="short", M=1000, N=252, TCP=0, seed=episode
-        )
-        env = HedgingEnvClass(
-            sim, garch_params=garch_params, device=device,
-            precomputed_data_1yr=precomputed_data_1yr,
-            precomputed_data_1_5yr=precomputed_data_1_5yr,
-            precomputed_data_2yr=precomputed_data_2yr,
-            n_hedging_instruments=n_hedging_instruments,
-            instrument_strikes=instrument_strikes,
-            instrument_types=instrument_types
-        )
-        env.reset()
-
-        try:
-            S_traj, V_traj, O_traj, obs_sequence, RL_positions = env.simulate_trajectory_and_get_observations(policy_net)
-            terminal_errors, trajectories = env.simulate_full_trajectory(RL_positions, O_traj)
-
-            # --- FULL GRADIENT DESCENT ---
-            opt.zero_grad()
-
-            # Compute loss on all terminal errors at once
-            loss = torch.abs(terminal_errors).mean()
-
-            # Backpropagate
-            loss.backward()
-
-            # Gradient clipping + optimizer step
-            torch.nn.utils.clip_grad_norm_(policy_net.parameters(), max_norm=1.0)
-            opt.step()
-
-            if torch.isnan(loss) or torch.isinf(loss):
-                logger.error("Loss became NaN/Inf")
-                raise RuntimeError("Loss became NaN/Inf")
-
-            if episode % 10 == 0:
-                checkpoint_name = f"policy_net_mc_garch_lstm_{n_hedging_instruments}inst.pth"
-                torch.save(policy_net.state_dict(), checkpoint_name)
-                logger.info("Checkpoint overwritten at episode %d: %s", episode, checkpoint_name)
-
-            final_reward = -float(loss.item())
-
-            logger.info(
-                "Episode %d | Final Reward: %.6f | Total Loss: %.6f",
-                episode, final_reward, loss.item()
-            )
-
-            if episode % 1 == 0:
-                try:
-                    path_idx = 4
-                    S_final = trajectories['S'][:, -1]
-                    payoff = torch.clamp(S_final - env.K, min=0.0) if env.option_type.lower() == "call" \
-                            else torch.clamp(env.K - S_final, min=0.0)
-                    payoff = payoff * env.contract_size
-
-                    # RL performance
-                    terminal_value_rl = trajectories['B'][:, -1] + RL_positions[:, -1, 0] * S_final
-                    for i, maturity in enumerate(env.instrument_maturities[1:], start=1):
-                        terminal_value_rl += RL_positions[:, -1, i] * O_traj[maturity][:, -1]
-
-                    terminal_hedge_error_rl = (terminal_value_rl - env.side * payoff).cpu().detach().numpy()
-
-                    mse_rl = float(np.mean(terminal_hedge_error_rl ** 2))
-                    smse_rl = mse_rl / (env.S0 ** 2)
-                    cvar_95_rl = float(np.mean(np.sort(terminal_hedge_error_rl ** 2)[-int(0.05 * env.M):]))
-
-                    # Compute HN benchmark
-                    logger.info("Computing analytical HN hedge for all %d paths", env.M)
-
-                    # Build portfolio greeks based on n_hedging_instruments
-                    if n_hedging_instruments == 1:
-                        HN_delta_all = env.compute_all_paths_hn_delta(S_traj)
-                        portfolio_greeks = {
-                            'delta': -env.side * HN_delta_all
-                        }
-                    elif n_hedging_instruments == 2:
-                        HN_delta_all = env.compute_all_paths_hn_delta(S_traj)
-                        HN_gamma_1yr = env.compute_all_paths_hn_gamma(S_traj)
-                        portfolio_greeks = {
-                            'delta': -env.side * HN_delta_all,
-                            'gamma': -env.side * HN_gamma_1yr
-                        }
-                    elif n_hedging_instruments == 3:
-                        HN_delta_all = env.compute_all_paths_hn_delta(S_traj)
-                        HN_gamma_1yr = env.compute_all_paths_hn_gamma(S_traj)
-                        HN_vega_1yr = env.compute_all_paths_hn_vega(S_traj)
-                        portfolio_greeks = {
-                            'delta': -env.side * HN_delta_all,
-                            'gamma': -env.side * HN_gamma_1yr,
-                            'vega': -env.side * HN_vega_1yr
-                        }
-
-                    # Compute HN positions
-                    HN_positions_all = env.compute_hn_option_positions(S_traj, portfolio_greeks)
-
-                    # Simulate HN strategy
-                    _, trajectories_hn = env.simulate_full_trajectory(HN_positions_all, O_traj)
-
-                    terminal_value_hn = trajectories_hn['B'][:, -1] + HN_positions_all[:, -1, 0] * S_final
-                    for i, maturity in enumerate(env.instrument_maturities[1:], start=1):
-                        terminal_value_hn += HN_positions_all[:, -1, i] * O_traj[maturity][:, -1]
-
-                    terminal_hedge_error_hn = (terminal_value_hn - env.side * payoff).cpu().detach().numpy()
-
-                    mse_hn = float(np.mean(terminal_hedge_error_hn ** 2))
-                    smse_hn = mse_hn / (env.S0 ** 2)
-                    cvar_95_hn = float(np.mean(np.sort(terminal_hedge_error_hn ** 2)[-int(0.05 * env.M):]))
-
-                    # Plotting
-                    fig, axes = plt.subplots(3, 2, figsize=(14, 14))
-                    time_steps = np.arange(env.N + 1)
-
-                    # Extract sample paths for plotting
-                    rl_positions_sample = RL_positions[path_idx].cpu().detach().numpy()
-                    hn_positions_sample = HN_positions_all[path_idx].cpu().detach().numpy()
-
-                    # Plot 1: Stock Delta Comparison
-                    axes[0, 0].plot(time_steps, rl_positions_sample[:, 0], label='RL Delta',
-                                  linewidth=2, color='tab:blue')
-                    axes[0, 0].plot(time_steps, hn_positions_sample[:, 0], label='HN Delta (Practitioner)',
-                                  linewidth=2, linestyle='--', alpha=0.8, color='tab:orange')
-                    axes[0, 0].set_xlabel("Time Step", fontsize=11)
-                    axes[0, 0].set_ylabel("Delta", fontsize=11)
-                    axes[0, 0].set_title(f"Stock Delta: Practitioner vs RL (Path {path_idx})", fontsize=12)
-                    axes[0, 0].legend(fontsize=10)
-                    axes[0, 0].grid(True, alpha=0.3)
-
-                    # Plot 2: Option Positions Comparison
-                    if n_hedging_instruments >= 2:
-                        for i in range(1, n_hedging_instruments):
-                            maturity = env.instrument_maturities[i]
-                            opt_type = env.instrument_types[i]
-                            strike = env.instrument_strikes[i]
-                            label_suffix = f'{maturity}d {opt_type.upper()} K={strike}'
-
-                            axes[0, 1].plot(time_steps, rl_positions_sample[:, i],
-                                          label=f'RL {label_suffix}', linewidth=2)
-                            axes[0, 1].plot(time_steps, hn_positions_sample[:, i],
-                                          label=f'HN {label_suffix}', linewidth=2,
-                                          linestyle='--', alpha=0.8)
-                        axes[0, 1].axhline(y=0, color='k', linestyle='-', alpha=0.3)
-                        axes[0, 1].set_xlabel("Time Step", fontsize=11)
-                        axes[0, 1].set_ylabel("Option Contracts", fontsize=11)
-                        axes[0, 1].set_title(f"Option Positions: Practitioner vs RL (Path {path_idx})", fontsize=12)
-                        axes[0, 1].legend(fontsize=9)
-                        axes[0, 1].grid(True, alpha=0.3)
-                    else:
-                        axes[0, 1].text(0.5, 0.5, 'No option positions\n(Delta hedge only)',
-                                      ha='center', va='center', transform=axes[0, 1].transAxes)
-                        axes[0, 1].set_title("Option Positions", fontsize=12)
-
-                    # Plot 3: Stock Price Trajectory
-                    axes[1, 0].plot(time_steps, S_traj[path_idx].cpu().detach().numpy(),
-                                  label='Stock Price', color='tab:green', linewidth=2)
-                    axes[1, 0].axhline(y=env.K, color='r', linestyle='--', label='Strike', alpha=0.7)
-                    axes[1, 0].set_xlabel("Time Step", fontsize=11)
-                    axes[1, 0].set_ylabel("Stock Price", fontsize=11)
-                    axes[1, 0].set_title(f"Stock Price Trajectory (Path {path_idx})", fontsize=12)
-                    axes[1, 0].legend(fontsize=10)
-                    axes[1, 0].grid(True, alpha=0.3)
-
-                    # Plot 4: Hedging Instrument Prices
-                    for i, maturity in enumerate(env.instrument_maturities[1:], start=1):
-                        opt_type = env.instrument_types[i]
-                        strike = env.instrument_strikes[i]
-                        axes[1, 1].plot(time_steps, O_traj[maturity][path_idx].cpu().detach().numpy(),
-                                      label=f'{maturity}d {opt_type.upper()} K={strike}', linewidth=2)
-                    axes[1, 1].set_xlabel("Time Step", fontsize=11)
-                    axes[1, 1].set_ylabel("Option Price", fontsize=11)
-                    axes[1, 1].set_title(f"Hedging Instrument Prices (Path {path_idx})", fontsize=12)
-                    axes[1, 1].legend(fontsize=10)
-                    axes[1, 1].grid(True, alpha=0.3)
-
-                    # Plot 5: Position Difference (RL - Practitioner)
-                    delta_diff = rl_positions_sample[:, 0] - hn_positions_sample[:, 0]
-                    axes[2, 0].plot(time_steps, delta_diff, color='tab:red', linewidth=2)
-                    axes[2, 0].axhline(y=0, color='k', linestyle='-', alpha=0.3)
-                    axes[2, 0].set_xlabel("Time Step", fontsize=11)
-                    axes[2, 0].set_ylabel("Delta Difference", fontsize=11)
-                    axes[2, 0].set_title(f"RL Delta - HN Delta (Path {path_idx})", fontsize=12)
-                    axes[2, 0].grid(True, alpha=0.3)
-
-                    # Plot 6: Terminal Error Distribution
-                    axes[2, 1].hist(terminal_hedge_error_rl, bins=50, color="tab:blue", alpha=0.7,
-                                  edgecolor='black', label='RL')
-                    axes[2, 1].hist(terminal_hedge_error_hn, bins=50, color="tab:orange", alpha=0.7,
-                                  edgecolor='black', label='HN (Practitioner)')
-                    axes[2, 1].axvline(x=0, color='r', linestyle='--', linewidth=2)
-                    axes[2, 1].set_xlabel("Terminal Hedge Error", fontsize=11)
-                    axes[2, 1].set_ylabel("Frequency", fontsize=11)
-
-                    greek_labels = {1: 'Delta', 2: 'Delta-Gamma', 3: 'Delta-Gamma-Vega'}
-                    title_text = (f"Episode {episode} - {n_hedging_instruments} Instruments ({greek_labels[n_hedging_instruments]})\n"
-                                f"RL: MSE={mse_rl:.4f} | SMSE={smse_rl:.6f} | CVaR95={cvar_95_rl:.4f}\n"
-                                f"HN: MSE={mse_hn:.4f} | SMSE={smse_hn:.6f} | CVaR95={cvar_95_hn:.4f}")
-                    axes[2, 1].set_title(title_text, fontsize=10)
-                    axes[2, 1].legend(fontsize=10)
-                    axes[2, 1].grid(True, alpha=0.3)
-
-                    fig.tight_layout()
-                    plt.savefig(f"hedge_comparison_{n_hedging_instruments}inst_ep{episode}.png",
-                              dpi=150, bbox_inches='tight')
-                    plt.show()
-
-                    # Log statistics
-                    delta_mae = np.mean(np.abs(delta_diff))
-                    delta_rmse = np.sqrt(np.mean(delta_diff ** 2))
-
-                    logger.info(
-                        "Path %d Delta Statistics - MAE: %.6f | RMSE: %.6f",
-                        path_idx, delta_mae, delta_rmse
-                    )
-
-                    if n_hedging_instruments >= 2:
-                        for i in range(1, n_hedging_instruments):
-                            position_diff = rl_positions_sample[:, i] - hn_positions_sample[:, i]
-                            position_mae = np.mean(np.abs(position_diff))
-                            position_rmse = np.sqrt(np.mean(position_diff ** 2))
-                            logger.info(
-                                "Path %d Instrument %d Position Statistics - MAE: %.6f | RMSE: %.6f",
-                                path_idx, i, position_mae, position_rmse
-                            )
-
-                    logger.info(
-                        "RL Performance: MSE=%.6f | SMSE=%.6f | CVaR95=%.6f",
-                        mse_rl, smse_rl, cvar_95_rl
-                    )
-                    logger.info(
-                        "HN Performance: MSE=%.6f | SMSE=%.6f | CVaR95=%.6f",
-                        mse_hn, smse_hn, cvar_95_hn
-                    )
-
-                except Exception as e:
-                    logger.warning("Plotting skipped due to %s", e)
-        except Exception as exc:
-            logger.exception("Error during episode %d: %s", episode, exc)
-            raise
-
-    out_name = f"policy_net_mc_garch_lstm_{n_hedging_instruments}inst.pth"
-    torch.save(policy_net.state_dict(), out_name)
-    logger.info("Training finished. Model saved to %s", out_name)
-
-    return policy_net
-
