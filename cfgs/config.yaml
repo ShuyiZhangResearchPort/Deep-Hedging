@@ -4,9 +4,9 @@ training:
   batch_size: 1000
   num_epochs: 400
   weight_decay: 0.00001
-  optimizer: "AdamW"
+  optimizer: "AdamW" # drop-in optimizers include: RAdam, AdaBelief
   episodes: 375
-  seed: 5
+  seed: 78
   gamma: 0.9999
   entropy_coefficient: 0.5
   device: "cpu"
@@ -32,7 +32,6 @@ instruments:
   # Option types for each hedging instrument (excluding stock)
   # Options: "call" or "put"
   types: ["call", "call"]
-  # Maturities in days for ALL instruments (including stock at index 0)
   # Length must be n_hedging_instruments
   maturities: [252, 378, 504]
 
@@ -40,14 +39,14 @@ instruments:
 simulation:
   S0: 100  # Initial stock price
   K: 100   # Strike price of option being hedged
-  r: 0.04  # Annual risk-free rate
+  r: 0.0403  # Annual risk-free rate
   T: 1.0   # Time to maturity in years
   option_type: "call"  # "call" or "put"
   side: "short"  # "short" or "long" - position in option being hedged
   contract_size: 1  # Contract multiplier
   M: 1000  # Number of Monte Carlo paths
   N: 252   # Number of time steps (trading days)
-  TCP: 0.0  # Transaction cost percentage
+  TCP: 0.0001  # Transaction cost percentage
 
 # Environment Configuration
 environment:
@@ -55,16 +54,16 @@ environment:
 
 # Precomputation Configuration
 precomputation:
-  N_quad: 128  # Number of quadrature points for integration
-  u_max: 100.0  # Maximum value for integration range
+  N_quad: 256  # Number of quadrature points for integration
+  u_max: 500.0  # Maximum value for integration range
   device: "cpu"  # Device for precomputation
 
 # Neural Network Architecture
 model:
   obs_dim: 5  # Observation dimension
   hidden_size: 128
-  num_layers: 2  # Number of FC layers after LSTM
-  lstm_layers: 2  # Number of LSTM layers
+  num_layers: 1  # Number of FC layers after LSTM
+  lstm_layers: 1  # Number of LSTM layers
 
 # Logging Configuration
 logging:
