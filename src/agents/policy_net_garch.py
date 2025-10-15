@@ -262,7 +262,7 @@ class HedgingEnvGARCH:
                         vega_inst[:, t] = vega_precomputed_analytical(
                             S=S_t, K=self.instrument_strikes[j], step_idx=t, r_daily=self.r, N=maturity_days, 
                             omega=self.omega, alpha=self.alpha, beta=self.beta, 
-                            gamma=self.gamma, lambda_=self.lambda_, sigma0=self.sigma0,
+                            gamma_param=self.gamma, lambda_=self.lambda_, sigma0=self.sigma0,
                             option_type=inst_option_type,
                             precomputed_data=precomputed
                         )
