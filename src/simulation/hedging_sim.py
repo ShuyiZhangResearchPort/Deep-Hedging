@@ -22,8 +22,6 @@ from scipy.stats import norm
 import sys
 sys.path.append('/content')  # add current folder to Python path just in case
 
-import importlib
-importlib.reload(hn_utils)  # reload if you edited it
 
 # Step 3: Import the functions
 from src.option_greek.pricing import _fstar_hn_scalar, _fstar_hn_vectorized, _f_hn_scalar, _f_hn_vectorized
