@@ -182,7 +182,7 @@ class HedgingEnvGARCH:
             V_t = vega_precomputed_analytical(
                 S=S_t, K=self.K, step_idx=t, r_daily=self.r, N=self.N, 
                 omega=self.omega, alpha=self.alpha, beta=self.beta, 
-                gamma=self.gamma, lambda_=self.lambda_, sigma0=self.sigma0,
+                gamma_param=self.gamma, lambda_=self.lambda_, sigma0=self.sigma0,
                 option_type=self.option_type, precomputed_data=self.precomputed_data_1yr
             )
             HN_vega_trajectory[:, t] = V_t
