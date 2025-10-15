@@ -44,7 +44,7 @@ simulation:
   option_type: "call"  # "call" or "put"
   side: "short"  # "short" or "long" - position in option being hedged
   contract_size: 1  # Contract multiplier
-  M: 1000  # Number of Monte Carlo paths
+  M: 2  # Number of Monte Carlo paths
   N: 252   # Number of time steps (trading days)
   TCP: 0.0001  # Transaction cost percentage
 
