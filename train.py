@@ -17,7 +17,9 @@ from typing import Dict, Any
 # Import your existing modules
 from src.agents.policy_net_garch import PolicyNetGARCH, HedgingEnvGARCH
 from src.option_greek.precompute import create_precomputation_manager_from_config
-from src.simulation.hedging_sim import HedgingSim  # Adjust import path
+from src.visualization.plot_results import compute_rl_metrics
+# You'll need to import your HedgingSim class
+# from src.simulation.hedging_sim import HedgingSim  # Adjust import path
 
 
 def setup_logging(config: Dict[str, Any]) -> None:
@@ -314,10 +316,118 @@ def save_checkpoint(
     logging.info(f"Checkpoint saved at episode {episode}: {checkpoint_path}")
 
 
+def run_inference(
+    config: Dict[str, Any],
+    policy_net: PolicyNetGARCH,
+    HedgingSim,
+    device: torch.device,
+    precomputed_data: Dict[int, Dict[str, Any]]
+) -> None:
+    """
+    Run inference with a pretrained model and generate visualizations.
+    
+    Args:
+        config: Configuration dictionary
+        policy_net: Trained policy network
+        HedgingSim: Hedging simulation class
+        device: Torch device
+        precomputed_data: Precomputed coefficients
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Starting inference with pretrained model...")
+    
+    policy_net.eval()
+    
+    # Create simulation
+    sim_config = config["simulation"]
+    sim = HedgingSim(
+        S0=sim_config["S0"],
+        K=sim_config["K"],
+        m=0.1,
+        r=sim_config["r"],
+        sigma=config["garch"]["sigma0"],
+        T=sim_config["T"],
+        option_type=sim_config["option_type"],
+        position=sim_config["side"],
+        M=sim_config["M"],
+        N=sim_config["N"],
+        TCP=sim_config["TCP"],
+        seed=config["training"]["seed"]
+    )
+    
+    # Prepare instrument parameters
+    inst_config = config["instruments"]
+    instrument_strikes = None
+    instrument_types = None
+    
+    if inst_config["n_hedging_instruments"] > 1:
+        instrument_strikes = inst_config["strikes"]
+        instrument_types = inst_config["types"]
+    
+    # Create environment
+    env = HedgingEnvGARCH(
+        sim=sim,
+        garch_params=config["garch"],
+        precomputed_data_1yr=precomputed_data[252],
+        precomputed_data_1_5yr=precomputed_data.get(378),
+        precomputed_data_2yr=precomputed_data.get(504),
+        n_hedging_instruments=inst_config["n_hedging_instruments"],
+        dt_min=config["environment"]["dt_min"],
+        device=str(device),
+        instrument_strikes=instrument_strikes,
+        instrument_types=instrument_types
+    )
+    
+    env.reset()
+    
+    # Run inference
+    with torch.no_grad():
+        S_traj, V_traj, O_traj, obs_sequence, RL_positions = \
+            env.simulate_trajectory_and_get_observations(policy_net)
+        
+        terminal_errors, trajectories = env.simulate_full_trajectory(
+            RL_positions, O_traj
+        )
+    
+    # Compute metrics
+    terminal_hedge_error_rl, rl_metrics = compute_rl_metrics(
+        env, RL_positions, trajectories, O_traj
+    )
+    
+    # Log metrics
+    logger.info(
+        f"Inference Results - MSE: {rl_metrics['mse']:.6f} | "
+        f"SMSE: {rl_metrics['smse']:.6f} | CVaR95: {rl_metrics['cvar_95']:.6f}"
+    )
+    
+    # Create metrics dict for visualization
+    metrics = {
+        "episode": 0,
+        "loss": float(torch.abs(terminal_errors).mean().item()),
+        "reward": -float(torch.abs(terminal_errors).mean().item()),
+        "trajectories": trajectories,
+        "RL_positions": RL_positions,
+        "S_traj": S_traj,
+        "V_traj": V_traj,
+        "O_traj": O_traj,
+        "env": env
+    }
+    
+    # Generate plots
+    try:
+        from src.visualization.plot_results import plot_episode_results
+        plot_episode_results(episode=0, metrics=metrics, config=config)
+        logger.info("Inference plots generated successfully")
+    except Exception as e:
+        logger.warning(f"Plot generation failed: {e}")
+
+
 def train(
     config: Dict[str, Any],
     HedgingSim,
-    visualize: bool = True
+    visualize: bool = True,
+    precomputed_data: Dict[int, Dict[str, Any]] = None,
+    initial_model: PolicyNetGARCH = None
 ) -> PolicyNetGARCH:
     """
     Main training loop.
@@ -326,6 +436,8 @@ def train(
         config: Configuration dictionary
         HedgingSim: Hedging simulation class
         visualize: Whether to generate visualizations
+        precomputed_data: Precomputed coefficients (if None, will be computed)
+        initial_model: Initial model weights to load (for transfer learning)
         
     Returns:
         Trained policy network
@@ -341,14 +453,21 @@ def train(
     device = torch.device(config["training"]["device"])
     logger.info(f"Using device: {device}")
     
-    # Precompute coefficients
-    logger.info("Starting precomputation...")
-    precomputation_manager = create_precomputation_manager_from_config(config)
-    precomputed_data = precomputation_manager.precompute_all()
-    logger.info("Precomputation complete")
+    # Precompute coefficients if not provided
+    if precomputed_data is None:
+        logger.info("Starting precomputation...")
+        precomputation_manager = create_precomputation_manager_from_config(config)
+        precomputed_data = precomputation_manager.precompute_all()
+        logger.info("Precomputation complete")
     
     # Create policy network and optimizer
     policy_net = create_policy_network(config, device)
+    
+    # Load initial model if provided
+    if initial_model is not None:
+        policy_net.load_state_dict(initial_model.state_dict())
+        logger.info("Initialized policy network from pretrained model")
+    
     optimizer = create_optimizer(policy_net, config)
     
     # Training loop
@@ -401,27 +520,11 @@ def train(
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Train GARCH-based option hedging with RL"
-    )
-    parser.add_argument(
-        "--config",
-        type=str,
-        default="cfgs/config.yaml",
-        help="Path to configuration file"
-    )
-    parser.add_argument(
-        "--no-visualize",
-        action="store_true",
-        help="Disable visualization during training"
-    )
-    
-    args = parser.parse_args()
-    
-    # Load and validate configuration
-    config = load_config(args.config)
-    setup_logging(config)
-    validate_config(config)
+    # Setup basic logging FIRST before anything else
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[logging.Stream
     
     # Import HedgingSim (adjust import path as needed)
     # For now, assuming it's available
@@ -431,11 +534,31 @@ def main():
         logging.error("Could not import HedgingSim. Please adjust import path.")
         raise
     
+    # Load model if specified
+    if args.load_model:
+        logging.info(f"Loading pretrained model from {args.load_model}")
+        policy_net = create_policy_network(config, device)
+        policy_net.load_state_dict(torch.load(args.load_model, map_location=device))
+        logging.info("Model loaded successfully")
+        
+        if args.inference_only:
+            # Run inference only
+            run_inference(
+                config=config,
+                policy_net=policy_net,
+                HedgingSim=HedgingSim,
+                device=device,
+                precomputed_data=precomputed_data
+            )
+            logging.info("Inference complete!")
+            return
+    
     # Train
     policy_net = train(
         config=config,
         HedgingSim=HedgingSim,
-        visualize=not args.no_visualize
+        visualize=not args.no_visualize,
+        initial_model=policy_net if args.load_model else None
     )
     
     logging.info("Training complete!")
