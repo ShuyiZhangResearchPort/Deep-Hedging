@@ -292,11 +292,7 @@ class HedgingEnvGARCH:
         mean_cond = condition_numbers.mean().item()
         pct_singular = (condition_numbers > 1e6).float().mean().item() * 100
 
-        if max_cond > 1e3:
-            logger.warning(
-                f"High condition number: max={max_cond:.2e}, mean={mean_cond:.2e}, "
-                f"{pct_singular:.1f}% effectively singular"
-            )
+
 
         # Solve A @ x = b
         epsilon = 1e-12  # small number to avoid division by zero
