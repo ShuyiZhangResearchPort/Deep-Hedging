@@ -318,12 +318,6 @@ class HedgingEnvGARCH:
         x = torch.linalg.solve(ATA + lambda_ * I, ATb)  # [M, N+1, n_instr, 1]
         x = x.squeeze(-1)  # [M, N+1, n_instr]
 
-        # Handle ill-conditioned matrices
-        singular_mask = condition_numbers > 1e6
-        if singular_mask.any():
-            x_fallback = torch.zeros_like(x)
-            x_fallback[:, :, 0] = -portfolio_greeks['delta']
-            x = torch.where(singular_mask.unsqueeze(-1), x_fallback, x)
 
         return x  # [M, N+1, n_instruments]
 
