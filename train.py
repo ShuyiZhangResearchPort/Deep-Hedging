@@ -436,7 +436,7 @@ def train(
 
 def main():
     """Main entry point."""
-    # Parse arguments first
+    # Parse arguments FIRST
     parser = argparse.ArgumentParser(
         description="Train GARCH-based option hedging with RL"
     )
@@ -471,7 +471,7 @@ def main():
     # Setup logging
     setup_logging(config)
     
-    # Validate
+    # Validate config
     validate_config(config)
     
     # Setup device
@@ -508,7 +508,7 @@ def main():
         logging.info("Inference complete!")
         return
     
-    # Training mode
+    # Training mode with optional model loading
     initial_model = None
     if args.load_model:
         logging.info(f"Loading pretrained model from {args.load_model}")
