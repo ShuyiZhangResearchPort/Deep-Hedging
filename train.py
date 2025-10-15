@@ -4,6 +4,10 @@ Main training script for GARCH-based option hedging with RL.
 This script loads configuration from YAML, initializes all components,
 and runs the training loop. It replaces the train_garch function with
 a more modular, configuration-driven approach.
+
+Usage:
+    python train.py --config cfgs/config.yaml
+    python train.py --config cfgs/config.yaml --load-model models/uniform/GARCHLSTMDG.pth --inference-only
 """
 
 import yaml
@@ -11,67 +15,48 @@ import torch
 import numpy as np
 import logging
 import argparse
+import sys
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
-# Import your existing modules
+# Import your modules
 from src.agents.policy_net_garch import PolicyNetGARCH, HedgingEnvGARCH
 from src.option_greek.precompute import create_precomputation_manager_from_config
 from src.visualization.plot_results import compute_rl_metrics
-# You'll need to import your HedgingSim class
-# from src.simulation.hedging_sim import HedgingSim  # Adjust import path
+
+
+logger = logging.getLogger(__name__)
 
 
 def setup_logging(config: Dict[str, Any]) -> None:
-    """
-    Setup logging based on configuration.
-    
-    Args:
-        config: Logging configuration
-    """
+    """Setup logging based on configuration."""
     log_level = getattr(logging, config["logging"]["level"])
     log_file = config["logging"].get("log_file")
+    
+    handlers = [logging.StreamHandler()]
+    if log_file:
+        handlers.append(logging.FileHandler(log_file))
     
     logging.basicConfig(
         level=log_level,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(),
-            *([logging.FileHandler(log_file)] if log_file else [])
-        ]
+        handlers=handlers,
+        force=True
     )
 
 
 def load_config(config_path: str) -> Dict[str, Any]:
-    """
-    Load configuration from YAML file.
-    
-    Args:
-        config_path: Path to configuration file
-        
-    Returns:
-        Configuration dictionary
-    """
+    """Load configuration from YAML file."""
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
-    
     logging.info(f"Loaded configuration from {config_path}")
     return config
 
 
 def validate_config(config: Dict[str, Any]) -> None:
-    """
-    Validate configuration parameters.
-    
-    Args:
-        config: Configuration dictionary
-        
-    Raises:
-        ValueError: If configuration is invalid
-    """
+    """Validate configuration parameters."""
     n_inst = config["instruments"]["n_hedging_instruments"]
     
-    # Validate instrument configuration
     if n_inst < 1 or n_inst > 3:
         raise ValueError(f"n_hedging_instruments must be 1, 2, or 3, got {n_inst}")
     
@@ -95,7 +80,6 @@ def validate_config(config: Dict[str, Any]) -> None:
             f"maturities must have length {n_inst}, got {n_maturities}"
         )
     
-    # Validate option types
     valid_types = ["call", "put"]
     for opt_type in config["instruments"]["types"]:
         if opt_type not in valid_types:
@@ -115,16 +99,7 @@ def validate_config(config: Dict[str, Any]) -> None:
 
 
 def create_policy_network(config: Dict[str, Any], device: torch.device) -> PolicyNetGARCH:
-    """
-    Create and initialize policy network.
-    
-    Args:
-        config: Configuration dictionary
-        device: Torch device
-        
-    Returns:
-        Initialized PolicyNetGARCH instance
-    """
+    """Create and initialize policy network."""
     model_config = config["model"]
     
     policy_net = PolicyNetGARCH(
@@ -136,7 +111,7 @@ def create_policy_network(config: Dict[str, Any], device: torch.device) -> Polic
     
     logging.info(
         f"Created policy network with {model_config['hidden_size']} hidden units, "
-        f"{model_config['num_layers']} layers"
+        f"{model_config['num_layers']} FC layers"
     )
     
     return policy_net
@@ -146,16 +121,7 @@ def create_optimizer(
     policy_net: PolicyNetGARCH,
     config: Dict[str, Any]
 ) -> torch.optim.Optimizer:
-    """
-    Create optimizer for policy network.
-    
-    Args:
-        policy_net: Policy network
-        config: Configuration dictionary
-        
-    Returns:
-        Configured optimizer
-    """
+    """Create optimizer for policy network."""
     train_config = config["training"]
     
     if train_config["optimizer"] == "AdamW":
@@ -175,8 +141,7 @@ def create_optimizer(
     
     logging.info(
         f"Created {train_config['optimizer']} optimizer with "
-        f"lr={train_config['learning_rate']}, "
-        f"weight_decay={train_config['weight_decay']}"
+        f"lr={train_config['learning_rate']}, weight_decay={train_config['weight_decay']}"
     )
     
     return optimizer
@@ -190,30 +155,15 @@ def train_episode(
     precomputed_data: Dict[int, Dict[str, Any]],
     HedgingSim,
     device: torch.device
-) -> Dict[str, float]:
-    """
-    Train for a single episode.
-    
-    Args:
-        episode: Episode number
-        config: Configuration dictionary
-        policy_net: Policy network
-        optimizer: Optimizer
-        precomputed_data: Precomputed coefficients
-        HedgingSim: Simulation class
-        device: Torch device
-        
-    Returns:
-        Dictionary of training metrics
-    """
-    logger = logging.getLogger(__name__)
+) -> Dict[str, Any]:
+    """Train for a single episode."""
     
     # Create simulation instance
     sim_config = config["simulation"]
     sim = HedgingSim(
         S0=sim_config["S0"],
         K=sim_config["K"],
-        m=0.1,  # Not in config, keeping default
+        m=0.1,
         r=sim_config["r"],
         sigma=config["garch"]["sigma0"],
         T=sim_config["T"],
@@ -254,9 +204,7 @@ def train_episode(
     S_traj, V_traj, O_traj, obs_sequence, RL_positions = \
         env.simulate_trajectory_and_get_observations(policy_net)
     
-    terminal_errors, trajectories = env.simulate_full_trajectory(
-        RL_positions, O_traj
-    )
+    terminal_errors, trajectories = env.simulate_full_trajectory(RL_positions, O_traj)
     
     # Compute loss
     optimizer.zero_grad()
@@ -273,12 +221,12 @@ def train_episode(
     
     # Check for NaN/Inf
     if torch.isnan(loss) or torch.isinf(loss):
-        logger.error("Loss became NaN/Inf")
+        logging.error("Loss became NaN/Inf")
         raise RuntimeError("Loss became NaN/Inf")
     
     final_reward = -float(loss.item())
     
-    logger.info(
+    logging.info(
         f"Episode {episode} | Final Reward: {final_reward:.6f} | "
         f"Total Loss: {loss.item():.6f}"
     )
@@ -301,14 +249,7 @@ def save_checkpoint(
     config: Dict[str, Any],
     episode: int
 ) -> None:
-    """
-    Save model checkpoint.
-    
-    Args:
-        policy_net: Policy network
-        config: Configuration dictionary
-        episode: Episode number
-    """
+    """Save model checkpoint."""
     n_inst = config["instruments"]["n_hedging_instruments"]
     checkpoint_path = config["output"]["checkpoint_path"].format(n_inst=n_inst)
     
@@ -323,18 +264,8 @@ def run_inference(
     device: torch.device,
     precomputed_data: Dict[int, Dict[str, Any]]
 ) -> None:
-    """
-    Run inference with a pretrained model and generate visualizations.
-    
-    Args:
-        config: Configuration dictionary
-        policy_net: Trained policy network
-        HedgingSim: Hedging simulation class
-        device: Torch device
-        precomputed_data: Precomputed coefficients
-    """
-    logger = logging.getLogger(__name__)
-    logger.info("Starting inference with pretrained model...")
+    """Run inference with a pretrained model and generate visualizations."""
+    logging.info("Starting inference with pretrained model...")
     
     policy_net.eval()
     
@@ -385,9 +316,7 @@ def run_inference(
         S_traj, V_traj, O_traj, obs_sequence, RL_positions = \
             env.simulate_trajectory_and_get_observations(policy_net)
         
-        terminal_errors, trajectories = env.simulate_full_trajectory(
-            RL_positions, O_traj
-        )
+        terminal_errors, trajectories = env.simulate_full_trajectory(RL_positions, O_traj)
     
     # Compute metrics
     terminal_hedge_error_rl, rl_metrics = compute_rl_metrics(
@@ -395,7 +324,7 @@ def run_inference(
     )
     
     # Log metrics
-    logger.info(
+    logging.info(
         f"Inference Results - MSE: {rl_metrics['mse']:.6f} | "
         f"SMSE: {rl_metrics['smse']:.6f} | CVaR95: {rl_metrics['cvar_95']:.6f}"
     )
@@ -417,9 +346,9 @@ def run_inference(
     try:
         from src.visualization.plot_results import plot_episode_results
         plot_episode_results(episode=0, metrics=metrics, config=config)
-        logger.info("Inference plots generated successfully")
+        logging.info("Inference plots generated successfully")
     except Exception as e:
-        logger.warning(f"Plot generation failed: {e}")
+        logging.warning(f"Plot generation failed: {e}")
 
 
 def train(
@@ -427,22 +356,9 @@ def train(
     HedgingSim,
     visualize: bool = True,
     precomputed_data: Dict[int, Dict[str, Any]] = None,
-    initial_model: PolicyNetGARCH = None
+    initial_model: Optional[PolicyNetGARCH] = None
 ) -> PolicyNetGARCH:
-    """
-    Main training loop.
-    
-    Args:
-        config: Configuration dictionary
-        HedgingSim: Hedging simulation class
-        visualize: Whether to generate visualizations
-        precomputed_data: Precomputed coefficients (if None, will be computed)
-        initial_model: Initial model weights to load (for transfer learning)
-        
-    Returns:
-        Trained policy network
-    """
-    logger = logging.getLogger(__name__)
+    """Main training loop."""
     
     # Set seeds
     seed = config["training"]["seed"]
@@ -451,14 +367,14 @@ def train(
     
     # Setup device
     device = torch.device(config["training"]["device"])
-    logger.info(f"Using device: {device}")
+    logging.info(f"Using device: {device}")
     
     # Precompute coefficients if not provided
     if precomputed_data is None:
-        logger.info("Starting precomputation...")
+        logging.info("Starting precomputation...")
         precomputation_manager = create_precomputation_manager_from_config(config)
         precomputed_data = precomputation_manager.precompute_all()
-        logger.info("Precomputation complete")
+        logging.info("Precomputation complete")
     
     # Create policy network and optimizer
     policy_net = create_policy_network(config, device)
@@ -466,7 +382,7 @@ def train(
     # Load initial model if provided
     if initial_model is not None:
         policy_net.load_state_dict(initial_model.state_dict())
-        logger.info("Initialized policy network from pretrained model")
+        logging.info("Initialized policy network from pretrained model")
     
     optimizer = create_optimizer(policy_net, config)
     
@@ -475,7 +391,7 @@ def train(
     checkpoint_freq = config["training"]["checkpoint_frequency"]
     plot_freq = config["training"]["plot_frequency"]
     
-    logger.info(
+    logging.info(
         f"Starting training: {n_episodes} episodes, "
         f"{config['instruments']['n_hedging_instruments']} instruments, "
         f"device={device}"
@@ -497,70 +413,116 @@ def train(
             if episode % checkpoint_freq == 0:
                 save_checkpoint(policy_net, config, episode)
             
-            # Visualization (if enabled)
+            # Visualization
             if visualize and episode % plot_freq == 0:
                 try:
                     from src.visualization.plot_results import plot_episode_results
                     plot_episode_results(episode, metrics, config)
                 except Exception as e:
-                    logger.warning(f"Plotting failed: {e}")
+                    logging.warning(f"Plotting failed: {e}")
         
         except Exception as e:
-            logger.exception(f"Error during episode {episode}: {e}")
+            logging.exception(f"Error during episode {episode}: {e}")
             raise
     
     # Save final model
     n_inst = config["instruments"]["n_hedging_instruments"]
     final_path = config["output"]["model_save_path"].format(n_inst=n_inst)
     torch.save(policy_net.state_dict(), final_path)
-    logger.info(f"Training finished. Model saved to {final_path}")
+    logging.info(f"Training finished. Model saved to {final_path}")
     
     return policy_net
 
 
 def main():
     """Main entry point."""
-    # Setup basic logging FIRST before anything else
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[logging.StreamHandler()],
-        force=True
+    # Parse arguments first
+    parser = argparse.ArgumentParser(
+        description="Train GARCH-based option hedging with RL"
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="cfgs/config.yaml",
+        help="Path to configuration file"
+    )
+    parser.add_argument(
+        "--no-visualize",
+        action="store_true",
+        help="Disable visualization during training"
+    )
+    parser.add_argument(
+        "--load-model",
+        type=str,
+        default=None,
+        help="Path to pretrained model"
+    )
+    parser.add_argument(
+        "--inference-only",
+        action="store_true",
+        help="Run inference only without training"
     )
     
-    # Import HedgingSim (adjust import path as needed)
-    # For now, assuming it's available
+    args = parser.parse_args()
+    
+    # Load config
+    config = load_config(args.config)
+    
+    # Setup logging
+    setup_logging(config)
+    
+    # Validate
+    validate_config(config)
+    
+    # Setup device
+    device = torch.device(config["training"]["device"])
+    logging.info(f"Using device: {device}")
+    
+    # Import HedgingSim
     try:
         from src.simulation.hedging_sim import HedgingSim
     except ImportError:
         logging.error("Could not import HedgingSim. Please adjust import path.")
-        raise
+        sys.exit(1)
     
-    # Load model if specified
-    if args.load_model:
+    # Precompute coefficients
+    logging.info("Starting precomputation...")
+    precomputation_manager = create_precomputation_manager_from_config(config)
+    precomputed_data = precomputation_manager.precompute_all()
+    logging.info("Precomputation complete")
+    
+    # Inference-only mode
+    if args.inference_only and args.load_model:
         logging.info(f"Loading pretrained model from {args.load_model}")
         policy_net = create_policy_network(config, device)
         policy_net.load_state_dict(torch.load(args.load_model, map_location=device))
         logging.info("Model loaded successfully")
         
-        if args.inference_only:
-            # Run inference only
-            run_inference(
-                config=config,
-                policy_net=policy_net,
-                HedgingSim=HedgingSim,
-                device=device,
-                precomputed_data=precomputed_data
-            )
-            logging.info("Inference complete!")
-            return
+        run_inference(
+            config=config,
+            policy_net=policy_net,
+            HedgingSim=HedgingSim,
+            device=device,
+            precomputed_data=precomputed_data
+        )
+        logging.info("Inference complete!")
+        return
+    
+    # Training mode
+    initial_model = None
+    if args.load_model:
+        logging.info(f"Loading pretrained model from {args.load_model}")
+        initial_model = create_policy_network(config, device)
+        initial_model.load_state_dict(torch.load(args.load_model, map_location=device))
+        logging.info("Model loaded - will continue training from checkpoint")
     
     # Train
     policy_net = train(
         config=config,
         HedgingSim=HedgingSim,
         visualize=not args.no_visualize,
-        initial_model=policy_net if args.load_model else None
+        precomputed_data=precomputed_data,
+        initial_model=initial_model
     )
     
     logging.info("Training complete!")
