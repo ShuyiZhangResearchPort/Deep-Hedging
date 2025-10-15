@@ -164,7 +164,9 @@ class HedgingEnvGARCH:
             S_t = S_trajectory[:, t]
             G_t = gamma_precomputed_analytical(
                 S=S_t, K=self.K, step_idx=t, r_daily=self.r, N=self.N,
-                option_type=self.option_type, precomputed_data=self.precomputed_data_1yr
+                option_type=self.option_type, precomputed_data=self.precomputed_data_1yr,
+                omega=self.omega, alpha=self.alpha, beta=self.beta, 
+                gamma_param=self.gamma, lambda_=self.lambda_
             )
             HN_gamma_trajectory[:, t] = G_t
 
@@ -178,8 +180,9 @@ class HedgingEnvGARCH:
         for t in range(N_plus_1):
             S_t = S_trajectory[:, t]
             V_t = vega_precomputed_analytical(
-                S=S_t, K=self.K, step_idx=t, r_daily=self.r, N=self.N, omega=self.omega,
-                alpha=self.alpha, beta=self.beta, gamma=self.gamma, lambda_=self.lambda_, sigma0=self.sigma0,
+                S=S_t, K=self.K, step_idx=t, r_daily=self.r, N=self.N, 
+                omega=self.omega, alpha=self.alpha, beta=self.beta, 
+                gamma=self.gamma, lambda_=self.lambda_, sigma0=self.sigma0,
                 option_type=self.option_type, precomputed_data=self.precomputed_data_1yr
             )
             HN_vega_trajectory[:, t] = V_t
@@ -243,21 +246,24 @@ class HedgingEnvGARCH:
 
                     delta_inst[:, t] = delta_precomputed_analytical(
                         S=S_t, K=self.instrument_strikes[j], step_idx=t, r_daily=self.r, N=maturity_days,
-                        option_type=inst_option_type,  # USE INSTRUMENT TYPE
+                        option_type=inst_option_type,
                         precomputed_data=precomputed
                     )
 
                     gamma_inst[:, t] = gamma_precomputed_analytical(
                         S=S_t, K=self.instrument_strikes[j], step_idx=t, r_daily=self.r, N=maturity_days,
-                        option_type=inst_option_type,  # USE INSTRUMENT TYPE
-                        precomputed_data=precomputed
+                        option_type=inst_option_type,
+                        precomputed_data=precomputed,
+                        omega=self.omega, alpha=self.alpha, beta=self.beta,
+                        gamma_param=self.gamma, lambda_=self.lambda_
                     )
 
                     if n >= 3:
                         vega_inst[:, t] = vega_precomputed_analytical(
-                            S=S_t, K=self.instrument_strikes[j], step_idx=t, r_daily=self.r, N=maturity_days, omega=self.omega,
-                            alpha=self.alpha, beta=self.beta, gamma=self.gamma, lambda_=self.lambda_, sigma0=self.sigma0,
-                            option_type=inst_option_type,  # USE INSTRUMENT TYPE
+                            S=S_t, K=self.instrument_strikes[j], step_idx=t, r_daily=self.r, N=maturity_days, 
+                            omega=self.omega, alpha=self.alpha, beta=self.beta, 
+                            gamma=self.gamma, lambda_=self.lambda_, sigma0=self.sigma0,
+                            option_type=inst_option_type,
                             precomputed_data=precomputed
                         )
 
