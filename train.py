@@ -524,7 +524,9 @@ def main():
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[logging.Stream
+        handlers=[logging.StreamHandler()],
+        force=True
+    )
     
     # Import HedgingSim (adjust import path as needed)
     # For now, assuming it's available
