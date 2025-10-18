@@ -25,15 +25,15 @@ garch:
 
 # Hedging Instruments Configuration
 instruments:
-  n_hedging_instruments: 2
+  n_hedging_instruments: 3
   # Strikes for each hedging instrument (excluding stock which is index 0)
   # Length must be n_hedging_instruments - 1
-  strikes: [100]
+  strikes: [105, 95]
   # Option types for each hedging instrument (excluding stock)
   # Options: "call" or "put"
-  types: ["call"]
+  types: ["call", "call"]
   # Length must be n_hedging_instruments
-  maturities: [252, 504]
+  maturities: [252, 378, 504]
 
 # Market Simulation Parameters
 simulation:
