@@ -5,13 +5,13 @@ training:
   num_epochs: 400
   weight_decay: 0.00001
   optimizer: "AdamW" # drop-in optimizers include: RAdam, AdaBelief
-  episodes: 375
-  seed: 780203
+  episodes: 400
+  seed: 78020349
   gamma: 0.9999
   entropy_coefficient: 0.5
   device: "cpu"
-  checkpoint_frequency: 10
-  plot_frequency: 25
+  checkpoint_frequency: 25
+  plot_frequency: 100
   gradient_clip_max_norm: 1.0
 
 # GARCH Model Parameters
@@ -25,28 +25,28 @@ garch:
 
 # Hedging Instruments Configuration
 instruments:
-  n_hedging_instruments: 3
+  n_hedging_instruments: 2
   # Strikes for each hedging instrument (excluding stock which is index 0)
   # Length must be n_hedging_instruments - 1
-  strikes: [85, 105]
+  strikes: [100]
   # Option types for each hedging instrument (excluding stock)
   # Options: "call" or "put"
-  types: ["call", "call"]
+  types: ["call"]
   # Length must be n_hedging_instruments
-  maturities: [252, 378, 504]
+  maturities: [252, 504]
 
 # Market Simulation Parameters
 simulation:
   S0: 100  # Initial stock price
   K: 100   # Strike price of option being hedged
-  r: 0.0403  # Annual risk-free rate
+  r: 0.042  # Annual risk-free rate
   T: 1.0   # Time to maturity in years
   option_type: "call"  # "call" or "put"
   side: "short"  # "short" or "long" - position in option being hedged
   contract_size: 1  # Contract multiplier
-  M: 2  # Number of Monte Carlo paths
+  M: 1000  # Number of Monte Carlo paths
   N: 252   # Number of time steps (trading days)
-  TCP: 0.0001  # Transaction cost percentage
+  TCP: 0  # Transaction cost percentage
 
 # Environment Configuration
 environment:
