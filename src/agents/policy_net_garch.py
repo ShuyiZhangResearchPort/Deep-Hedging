@@ -513,9 +513,9 @@ class HedgingEnvGARCH:
                 else:  # Options
                     maturity = self.instrument_maturities[i]
                     price = O_trajectories[maturity][:, t+1]
-                    multiplier = 100
+                    multiplier = 10
 
-                # Transaction costs
+                # Transaction costs, inportant for an option contract.
                 cost = self.TCP * multiplier * torch.abs(trade) * price
 
                 # Update bank account
