@@ -25,7 +25,7 @@ garch:
 
 # Hedging Instruments Configuration
 instruments:
-  n_hedging_instruments: 3
+  n_hedging_instruments: 2
   # Strikes for each hedging instrument (excluding stock which is index 0)
   # Length must be n_hedging_instruments - 1
   strikes: [100]
