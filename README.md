@@ -1,6 +1,8 @@
 # Deep-Hedging
 
 A reinforcement learning framework for computing optimal dynamic hedging strategies on option portfolios. The agent learns to rebalance a portfolio of stocks, bonds, and options at each time step to minimize Greeks (delta, gamma, vega) subject to transaction costs.
+The simulation scheme utilized is the GARCH(1, 1) model under Heston-Nandi parameters (Can be adjusted).
+As a result, option prices and greeks are calculated under the Heston-Nandi framework as well.
 
 ## Quick Start
 ```bash
