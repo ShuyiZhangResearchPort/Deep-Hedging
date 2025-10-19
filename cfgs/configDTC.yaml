@@ -9,7 +9,7 @@ training:
   seed: 78020349
   gamma: 0.9999
   entropy_coefficient: 0.5
-  device: "cpu"
+  device: "cuda"
   checkpoint_frequency: 25
   plot_frequency: 100
   gradient_clip_max_norm: 1.0
