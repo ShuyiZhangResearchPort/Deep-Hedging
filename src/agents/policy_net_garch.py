@@ -106,7 +106,7 @@ class HedgingEnvGARCH:
             else:
                 self.instrument_strikes = [None, instrument_strikes[0], instrument_strikes[1]]
         elif n_hedging_instruments == 4:
-            self.instruments_maturities = [252, 378, 504, 630]
+            self.instrument_maturities = [252, 378, 504, 630]
             if instrument_strikes is None:
                 self.instrument_strikes = [None, self.sim.K, self.sim.K, self.sim.K]  # Default ATM
             else:
