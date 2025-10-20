@@ -309,7 +309,7 @@ class HedgingEnvGARCH:
                 greeks = {
                     'delta': delta_inst,
                     'gamma': gamma_inst,
-                    'vega': vega_inst
+                    'vega': vega_inst,
                     'theta': theta_inst
                 }
 
