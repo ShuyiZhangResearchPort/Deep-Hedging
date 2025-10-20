@@ -384,67 +384,149 @@ def theta_precomputed_analytical(
 ):
     """
     Compute theta analytically using precomputed Heston-Nandi coefficients.
-    Theta = -∂Price/∂t, computed as finite difference between adjacent time steps.
+    Theta = -∂Price/∂τ where τ is time to maturity.
     
-    Since the precomputed coefficients contain data for all time steps [0, N],
-    we can compute theta by differencing the prices at adjacent steps.
+    Since step_idx increases as time to maturity decreases:
+    - step_idx = 0 means τ = N days
+    - step_idx = N means τ = 0 days
     
-    Args:
-        S: Spot price(s), float or torch.Tensor
-        K: Strike price(s), float or torch.Tensor
-        step_idx: Current step index (0..N)
-        r_daily: Daily risk-free rate
-        N: Total number of days to expiry used for precomputation
-        option_type: 'call' or 'put'
-        precomputed_data: Output of precompute_hn_coefficients(...)
-        omega, alpha, beta, gamma_param, lambda_: HN parameters
-        sigma0: Annualized initial volatility
+    Therefore: dτ/d(step_idx) = -1, so ∂Price/∂τ = -∂Price/∂(step_idx)
+    And theta = -∂Price/∂τ = ∂Price/∂(step_idx)
     
-    Returns:
-        torch.FloatTensor of theta with the broadcasted shape of (S, K).
+    But we want theta as time decay (negative for long positions), so:
+    theta = Price(step_idx) - Price(step_idx+1)
     """
     device = torch.device(precomputed_data["device"])
     coefficients = precomputed_data["coefficients"]
+    u_nodes = precomputed_data["u_nodes"]
+    w_nodes = precomputed_data["w_nodes"]
+
+    S_t = torch.as_tensor(S, dtype=torch.float64, device=device)
+    K_t = torch.as_tensor(K, dtype=torch.float64, device=device)
+
+    shape = torch.broadcast_shapes(S_t.shape, K_t.shape)
+    S_bc = S_t.expand(shape) if S_t.shape != shape else S_t
+    K_bc = K_t.expand(shape) if K_t.shape != shape else K_t
+
+    log_S = torch.log(S_bc)
+    log_K = torch.log(K_bc)
+
+    omega_c = torch.tensor(omega, dtype=torch.complex128, device=device)
+    alpha_c = torch.tensor(alpha, dtype=torch.complex128, device=device)
+    beta_c = torch.tensor(beta, dtype=torch.complex128, device=device)
+    gamma_c = torch.tensor(gamma_param, dtype=torch.complex128, device=device)
+    lambda_c = torch.tensor(lambda_, dtype=torch.complex128, device=device)
+    r_daily_c = torch.tensor(r_daily, dtype=torch.complex128, device=device)
+
+    lambda_r = torch.tensor(-0.5, dtype=torch.complex128, device=device)
+    gamma_r = gamma_c + lambda_c + 0.5
+    sigma2 = (omega + alpha) / (1 - beta - alpha * gamma_r**2)
+
+    Time_inDays = N - step_idx
     
-    # Check bounds
-    if step_idx < 0 or step_idx > N:
-        raise ValueError(f"step_idx {step_idx} out of bounds [0, {N}]")
+    if Time_inDays <= 0:
+        # At expiration, theta is zero
+        return torch.zeros_like(S_bc, dtype=torch.float32)
+
+    iu_nodes = 1j * u_nodes
+
+    # We need to compute the derivative of the recursion with respect to time steps
+    # Key insight: going from T to T+1 steps adds one more iteration to the recursion
     
-    # Compute current price at step_idx
-    price_current = price_option_precomputed(
-        S, K, step_idx, r_daily, N, option_type, precomputed_data
-    )
+    theta1 = None
+    theta2 = None
+
+    for const_idx, const_val in enumerate([1.0, 0.0]):
+        const_c = torch.tensor(const_val, dtype=torch.complex128, device=device)
+        cphi_vec = iu_nodes + const_c
+
+        # Compute a and b at current time
+        a_vec = cphi_vec * r_daily_c
+        b_vec = lambda_r * cphi_vec + 0.5 * cphi_vec**2
+
+        for i in range(1, Time_inDays):
+            denom_vec = 1.0 - 2.0 * alpha_c * b_vec
+            a_vec = a_vec + cphi_vec * r_daily_c + b_vec * omega_c - 0.5 * torch.log(denom_vec)
+            b_vec = (cphi_vec * (lambda_r + gamma_r) - 0.5 * gamma_r**2 +
+                     beta_c * b_vec + 0.5 * (cphi_vec - gamma_r)**2 / denom_vec)
+
+        # The next step increment (what gets added when we go from T to T+1 days)
+        denom_vec = 1.0 - 2.0 * alpha_c * b_vec
+        delta_a = cphi_vec * r_daily_c + b_vec * omega_c - 0.5 * torch.log(denom_vec)
+        delta_b = ((cphi_vec * (lambda_r + gamma_r) - 0.5 * gamma_r**2 +
+                    beta_c * b_vec + 0.5 * (cphi_vec - gamma_r)**2 / denom_vec) - b_vec)
+
+        # Current exponent
+        exponent = (-1j * u_nodes.unsqueeze(-1) * log_K.unsqueeze(0) +
+                    cphi_vec.unsqueeze(-1) * log_S.unsqueeze(0) +
+                    a_vec.unsqueeze(-1) + b_vec.unsqueeze(-1) * sigma2)
+
+        cphi0 = 1j * u_nodes
+        f = torch.exp(exponent) / cphi0.unsqueeze(-1) / np.pi
+
+        # Derivative of f with respect to adding one more time step
+        # d(exp(a + b*sigma2))/dT = exp(a + b*sigma2) * (delta_a + delta_b*sigma2)
+        d_exponent = delta_a.unsqueeze(-1) + delta_b.unsqueeze(-1) * sigma2
+        df_dT = f * d_exponent
+
+        contrib = torch.sum(w_nodes.unsqueeze(-1) * torch.real(df_dT), dim=0)
+
+        if const_idx == 0:
+            theta1 = contrib
+        else:
+            theta2 = contrib
+
+    Time_inDays_f = float(N - step_idx)
+    disc = torch.exp(torch.tensor(-r_daily * Time_inDays_f, dtype=torch.float64, device=device))
+
+    # Current price components (for discount factor derivative)
+    # We also need the current integral values
+    int1 = None
+    int2 = None
     
-    # Handle boundary cases
-    if step_idx == N:
-        # At expiration, use backward difference
-        if step_idx == 0:
-            # Only one time point, theta is zero
-            return torch.zeros_like(price_current)
-        
-        price_previous = price_option_precomputed(
-            S, K, step_idx - 1, r_daily, N, option_type, precomputed_data
-        )
-        theta_val = -(price_current - price_previous)
-    
-    elif step_idx == 0:
-        # At beginning, use forward difference
-        price_next = price_option_precomputed(
-            S, K, step_idx + 1, r_daily, N, option_type, precomputed_data
-        )
-        theta_val = -(price_next - price_current)
-    
+    for const_idx, const_val in enumerate([1.0, 0.0]):
+        const_c = torch.tensor(const_val, dtype=torch.complex128, device=device)
+        cphi_vec = iu_nodes + const_c
+
+        a_vec = cphi_vec * r_daily_c
+        b_vec = lambda_r * cphi_vec + 0.5 * cphi_vec**2
+
+        for i in range(1, Time_inDays):
+            denom_vec = 1.0 - 2.0 * alpha_c * b_vec
+            a_vec = a_vec + cphi_vec * r_daily_c + b_vec * omega_c - 0.5 * torch.log(denom_vec)
+            b_vec = (cphi_vec * (lambda_r + gamma_r) - 0.5 * gamma_r**2 +
+                     beta_c * b_vec + 0.5 * (cphi_vec - gamma_r)**2 / denom_vec)
+
+        exponent = (-1j * u_nodes.unsqueeze(-1) * log_K.unsqueeze(0) +
+                    cphi_vec.unsqueeze(-1) * log_S.unsqueeze(0) +
+                    a_vec.unsqueeze(-1) + b_vec.unsqueeze(-1) * sigma2)
+
+        cphi0 = 1j * u_nodes
+        f = torch.exp(exponent) / cphi0.unsqueeze(-1) / np.pi
+        integrand = torch.real(f)
+        integral = torch.sum(w_nodes.unsqueeze(-1) * integrand, dim=0)
+
+        if const_idx == 0:
+            int1 = integral
+        else:
+            int2 = integral
+
+    # Total derivative with respect to number of time steps
+    # d/dT [exp(-r*T) * int1 - K * exp(-r*T) * int2]
+    # = -r*exp(-r*T)*int1 + exp(-r*T)*dint1/dT - K*[-r*exp(-r*T)*int2 + exp(-r*T)*dint2/dT]
+    dPrice_dT = (-r_daily * disc * int1 + disc * theta1 -
+                 K_bc * (-r_daily * disc * int2 + disc * theta2))
+
+    # Theta = -dPrice/d(tau), and d(tau)/dT = 1 (more steps = more time to maturity)
+    # So theta = -dPrice_dT
+    theta_val = -dPrice_dT
+
+    if option_type == "call":
+        return theta_val.to(torch.float32)
+    elif option_type == "put":
+        return theta_val.to(torch.float32)
     else:
-        # Use central difference for better accuracy
-        price_next = price_option_precomputed(
-            S, K, step_idx + 1, r_daily, N, option_type, precomputed_data
-        )
-        price_previous = price_option_precomputed(
-            S, K, step_idx - 1, r_daily, N, option_type, precomputed_data
-        )
-        theta_val = -(price_next - price_previous) / 2.0
-    
-    return theta_val
+        raise ValueError("option_type must be 'call' or 'put'")
 @jit(nopython=True, cache=True)
 def _fstar_hn_scalar(phi, const, S, X, Time_inDays, r_daily, omega, alpha, beta, gamma, lambda_):
     cphi0 = 1j * phi
