@@ -299,13 +299,13 @@ class HedgingEnvGARCH:
                         precomputed_data=precomputed
                     )
                     if n >= 4:
-                    theta_inst[:, t] = theta_precomputed_analytical(
-                        S=S_t, K=self.instrument_strikes[j], step_idx=t, r_daily=self.r, N=maturity_days, 
-                        omega=self.omega, alpha=self.alpha, beta=self.beta, 
-                        gamma_param=self.gamma, lambda_=self.lambda_, sigma0=self.sigma0,
-                        option_type=inst_option_type,
-                        precomputed_data=precomputed
-                    )
+                        theta_inst[:, t] = theta_precomputed_analytical(
+                            S=S_t, K=self.instrument_strikes[j], step_idx=t, r_daily=self.r, N=maturity_days, 
+                            omega=self.omega, alpha=self.alpha, beta=self.beta, 
+                            gamma_param=self.gamma, lambda_=self.lambda_, sigma0=self.sigma0,
+                            option_type=inst_option_type,
+                            precomputed_data=precomputed
+                        )
                 greeks = {
                     'delta': delta_inst,
                     'gamma': gamma_inst,
