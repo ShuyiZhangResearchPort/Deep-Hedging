@@ -11,7 +11,8 @@ from src.option_greek.pricing import (
     price_option_precomputed,
     delta_precomputed_analytical,
     gamma_precomputed_analytical,
-    vega_precomputed_analytical
+    vega_precomputed_analytical,
+    theta_precomputed_analytical
 )
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,8 @@ class PolicyNetGARCH(nn.Module):
 class HedgingEnvGARCH:
     def __init__(self, sim, garch_params=None, precomputed_data_1yr=None,
                  precomputed_data_1_5yr=None, precomputed_data_2yr=None,
-                 n_hedging_instruments=2, dt_min=1e-10, device="cpu",
+                 precomputed_data_2_5yr=None, n_hedging_instruments=2, 
+                 dt_min=1e-10, device="cpu", 
                  instrument_strikes=None, instrument_types=None):
         self.sim = sim
         self.M = sim.M
@@ -85,6 +87,7 @@ class HedgingEnvGARCH:
         self.precomputed_data_1yr = precomputed_data_1yr
         self.precomputed_data_1_5yr = precomputed_data_1_5yr
         self.precomputed_data_2yr = precomputed_data_2yr
+        self.precomputed_data_2_5yr = precomputed_data_2_5yr
 
         # Define instrument maturities based on n_hedging_instruments
         if n_hedging_instruments == 1:
@@ -102,8 +105,15 @@ class HedgingEnvGARCH:
                 self.instrument_strikes = [None, self.sim.K, self.sim.K]  # Default ATM
             else:
                 self.instrument_strikes = [None, instrument_strikes[0], instrument_strikes[1]]
+        elif n_hedging_instruments == 4:
+            self.instruments_maturities = [252, 378, 504, 630]
+            if instrument_strikes is None:
+                self.instrument_strikes = [None, self.sim.K, self.sim.K, self.sim.K]  # Default ATM
+            else:
+                self.instrument_strikes = [None, instrument_strikes[0], instrument_strikes[1], instrument_strikes[2]
         else:
-            raise ValueError(f"n_hedging_instruments must be 1, 2, or 3, got {n_hedging_instruments}")
+            raise ValueError(f"n_hedging_instruments must be 1, 2, 3, or 4, got {n_hedging_instruments}")
+        
 
         # Define instrument types (call/put) based on n_hedging_instruments
         if instrument_types is None:
@@ -188,6 +198,22 @@ class HedgingEnvGARCH:
             HN_vega_trajectory[:, t] = V_t
 
         return HN_vega_trajectory
+    def compute_all_paths_hn_theta(self, S_trajecty):
+        """Compute Heston-Nandi vega for ALL paths."""
+        M, N_plus_1 = S_trajectory.shape
+        HN_theta_trajectory = torch.zeros((M, N_plus_1), dtype=torch.float32, device=self.device)
+
+        for t in range(N_plus_1):
+            S_t = S_trajectory[:, t]
+            V_t = theta_precomputed_analytical(
+                S=S_t, K=self.K, step_idx=t, r_daily=self.r, N=self.N, 
+                omega=self.omega, alpha=self.alpha, beta=self.beta, 
+                gamma_param=self.gamma, lambda_=self.lambda_, sigma0=self.sigma0,
+                option_type=self.option_type, precomputed_data=self.precomputed_data_1yr
+            )
+            HN_theta_trajectory[:, t] = V_t
+
+        return HN_theta_trajectory
 
     def compute_hn_option_positions(self, S_trajectory, portfolio_greeks):
         """
@@ -215,6 +241,8 @@ class HedgingEnvGARCH:
             greek_names = ['delta', 'gamma']
         elif n == 3:
             greek_names = ['delta', 'gamma', 'vega']
+        elif n == 4:
+            greek_names = ['delta', 'gamma', 'vega', 'theta']
 
         # Compute greeks for all hedging instruments
         instrument_greeks = []
@@ -225,12 +253,15 @@ class HedgingEnvGARCH:
                     'delta': torch.ones((M, N_plus_1), device=self.device),
                     'gamma': torch.zeros((M, N_plus_1), device=self.device),
                     'vega': torch.zeros((M, N_plus_1), device=self.device),
+                    'theta': torch.zeros((M, N_plus_1), device=self.device)
                 }
             else:  # Options
                 if maturity_days == 378:
                     precomputed = self.precomputed_data_1_5yr
                 elif maturity_days == 504:
                     precomputed = self.precomputed_data_2yr
+                elif maturity_days = 630:
+                    precomputed = self.precomputed_data_2_5yr
                 else:
                     raise ValueError(f"No precomputed data for maturity {maturity_days}")
 
@@ -240,6 +271,7 @@ class HedgingEnvGARCH:
                 delta_inst = torch.zeros((M, N_plus_1), device=self.device)
                 gamma_inst = torch.zeros((M, N_plus_1), device=self.device)
                 vega_inst = torch.zeros((M, N_plus_1), device=self.device)
+                theta_inst = torch.zeros((M, N_plus_1), device=self.device)
 
                 for t in range(N_plus_1):
                     S_t = S_trajectory[:, t]
@@ -258,19 +290,27 @@ class HedgingEnvGARCH:
                         gamma_param=self.gamma, lambda_=self.lambda_
                     )
 
-                    if n >= 3:
-                        vega_inst[:, t] = vega_precomputed_analytical(
-                            S=S_t, K=self.instrument_strikes[j], step_idx=t, r_daily=self.r, N=maturity_days, 
-                            omega=self.omega, alpha=self.alpha, beta=self.beta, 
-                            gamma_param=self.gamma, lambda_=self.lambda_, sigma0=self.sigma0,
-                            option_type=inst_option_type,
-                            precomputed_data=precomputed
-                        )
-
+                    
+                    vega_inst[:, t] = vega_precomputed_analytical(
+                        S=S_t, K=self.instrument_strikes[j], step_idx=t, r_daily=self.r, N=maturity_days, 
+                        omega=self.omega, alpha=self.alpha, beta=self.beta, 
+                        gamma_param=self.gamma, lambda_=self.lambda_, sigma0=self.sigma0,
+                        option_type=inst_option_type,
+                        precomputed_data=precomputed
+                    )
+                    if n >= 4:
+                    theta_inst[:, t] = theta_precomputed_analytical(
+                        S=S_t, K=self.instrument_strikes[j], step_idx=t, r_daily=self.r, N=maturity_days, 
+                        omega=self.omega, alpha=self.alpha, beta=self.beta, 
+                        gamma_param=self.gamma, lambda_=self.lambda_, sigma0=self.sigma0,
+                        option_type=inst_option_type,
+                        precomputed_data=precomputed
+                    )
                 greeks = {
                     'delta': delta_inst,
                     'gamma': gamma_inst,
                     'vega': vega_inst
+                    'theta': theta_inst
                 }
 
             instrument_greeks.append(greeks)
