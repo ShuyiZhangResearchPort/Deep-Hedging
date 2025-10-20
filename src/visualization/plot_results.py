@@ -73,6 +73,19 @@ def compute_practitioner_benchmark(
             'gamma': -env.side * HN_gamma_1yr,
             'vega': -env.side * HN_vega_1yr
         }
+    elif n_hedging_instruments == 4:
+        # Delta-gamma-vega hedge
+        HN_delta_all = env.compute_all_paths_hn_delta(S_traj)
+        HN_gamma_1yr = env.compute_all_paths_hn_gamma(S_traj)
+        HN_vega_1yr = env.compute_all_paths_hn_vega(S_traj)
+        HN_theta_1yr = env.compute_all_paths_hn_theta(S_traj)
+
+        portfolio_greeks = {
+            'delta': -env.side * HN_delta_all,
+            'gamma': -env.side * HN_gamma_1yr,
+            'vega': -env.side * HN_vega_1yr,
+            'theta': -env.side * HN_theta_1yr
+        }
     else:
         raise ValueError(f"n_hedging_instruments must be 1, 2, or 3")
     
