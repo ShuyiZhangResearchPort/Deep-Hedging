@@ -110,7 +110,7 @@ class HedgingEnvGARCH:
             if instrument_strikes is None:
                 self.instrument_strikes = [None, self.sim.K, self.sim.K, self.sim.K]  # Default ATM
             else:
-                self.instrument_strikes = [None, instrument_strikes[0], instrument_strikes[1], instrument_strikes[2]
+                self.instrument_strikes = [None, instrument_strikes[0], instrument_strikes[1], instrument_strikes[2]]
         else:
             raise ValueError(f"n_hedging_instruments must be 1, 2, 3, or 4, got {n_hedging_instruments}")
         
