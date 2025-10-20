@@ -73,6 +73,8 @@ def validate_config(config: Dict[str, Any]) -> None:
             raise ValueError(
                 f"types must have length {n_inst - 1}, got {n_types}"
             )
+            
+        
     
     n_maturities = len(config["instruments"]["maturities"])
     if n_maturities != n_inst:
@@ -191,6 +193,7 @@ def train_episode(
         precomputed_data_1yr=precomputed_data[252],
         precomputed_data_1_5yr=precomputed_data.get(378),
         precomputed_data_2yr=precomputed_data.get(504),
+        precomputed_data_2_5yr=precomputed_data.get(630),
         n_hedging_instruments=inst_config["n_hedging_instruments"],
         dt_min=config["environment"]["dt_min"],
         device=str(device),
@@ -302,6 +305,7 @@ def run_inference(
         precomputed_data_1yr=precomputed_data[252],
         precomputed_data_1_5yr=precomputed_data.get(378),
         precomputed_data_2yr=precomputed_data.get(504),
+        precomputed_data_2_5yr=precomputed_data.get(630),
         n_hedging_instruments=inst_config["n_hedging_instruments"],
         dt_min=config["environment"]["dt_min"],
         device=str(device),
