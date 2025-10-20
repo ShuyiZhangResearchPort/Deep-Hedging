@@ -260,7 +260,7 @@ class HedgingEnvGARCH:
                     precomputed = self.precomputed_data_1_5yr
                 elif maturity_days == 504:
                     precomputed = self.precomputed_data_2yr
-                elif maturity_days = 630:
+                elif maturity_days == 630:
                     precomputed = self.precomputed_data_2_5yr
                 else:
                     raise ValueError(f"No precomputed data for maturity {maturity_days}")
