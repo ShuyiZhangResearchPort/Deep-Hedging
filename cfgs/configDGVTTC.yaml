@@ -11,7 +11,7 @@ training:
   entropy_coefficient: 0.5
   device: "cpu"
   checkpoint_frequency: 25
-  plot_frequency: 100
+  plot_frequency: 1
   gradient_clip_max_norm: 1.0
 
 # GARCH Model Parameters
