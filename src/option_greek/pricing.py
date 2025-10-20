@@ -367,6 +367,84 @@ def delta_precomputed_analytical(S, K, step_idx, r_daily, N, option_type, precom
         return (delta_call - 1.0).to(torch.float32)
     else:
         raise ValueError("option_type must be 'call' or 'put'")
+def theta_precomputed_analytical(
+    S,
+    K,
+    step_idx,
+    r_daily,
+    N,
+    option_type,
+    precomputed_data,
+    omega,
+    alpha,
+    beta,
+    gamma_param,
+    lambda_,
+    sigma0,
+):
+    """
+    Compute theta analytically using precomputed Heston-Nandi coefficients.
+    Theta = -∂Price/∂t, computed as finite difference between adjacent time steps.
+    
+    Since the precomputed coefficients contain data for all time steps [0, N],
+    we can compute theta by differencing the prices at adjacent steps.
+    
+    Args:
+        S: Spot price(s), float or torch.Tensor
+        K: Strike price(s), float or torch.Tensor
+        step_idx: Current step index (0..N)
+        r_daily: Daily risk-free rate
+        N: Total number of days to expiry used for precomputation
+        option_type: 'call' or 'put'
+        precomputed_data: Output of precompute_hn_coefficients(...)
+        omega, alpha, beta, gamma_param, lambda_: HN parameters
+        sigma0: Annualized initial volatility
+    
+    Returns:
+        torch.FloatTensor of theta with the broadcasted shape of (S, K).
+    """
+    device = torch.device(precomputed_data["device"])
+    coefficients = precomputed_data["coefficients"]
+    
+    # Check bounds
+    if step_idx < 0 or step_idx > N:
+        raise ValueError(f"step_idx {step_idx} out of bounds [0, {N}]")
+    
+    # Compute current price at step_idx
+    price_current = price_option_precomputed(
+        S, K, step_idx, r_daily, N, option_type, precomputed_data
+    )
+    
+    # Handle boundary cases
+    if step_idx == N:
+        # At expiration, use backward difference
+        if step_idx == 0:
+            # Only one time point, theta is zero
+            return torch.zeros_like(price_current)
+        
+        price_previous = price_option_precomputed(
+            S, K, step_idx - 1, r_daily, N, option_type, precomputed_data
+        )
+        theta_val = -(price_current - price_previous)
+    
+    elif step_idx == 0:
+        # At beginning, use forward difference
+        price_next = price_option_precomputed(
+            S, K, step_idx + 1, r_daily, N, option_type, precomputed_data
+        )
+        theta_val = -(price_next - price_current)
+    
+    else:
+        # Use central difference for better accuracy
+        price_next = price_option_precomputed(
+            S, K, step_idx + 1, r_daily, N, option_type, precomputed_data
+        )
+        price_previous = price_option_precomputed(
+            S, K, step_idx - 1, r_daily, N, option_type, precomputed_data
+        )
+        theta_val = -(price_next - price_previous) / 2.0
+    
+    return theta_val
 @jit(nopython=True, cache=True)
 def _fstar_hn_scalar(phi, const, S, X, Time_inDays, r_daily, omega, alpha, beta, gamma, lambda_):
     cphi0 = 1j * phi
