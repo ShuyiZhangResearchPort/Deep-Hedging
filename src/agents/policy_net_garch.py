@@ -198,7 +198,7 @@ class HedgingEnvGARCH:
             HN_vega_trajectory[:, t] = V_t
 
         return HN_vega_trajectory
-    def compute_all_paths_hn_theta(self, S_trajecty):
+    def compute_all_paths_hn_theta(self, S_trajectory):
         """Compute Heston-Nandi vega for ALL paths."""
         M, N_plus_1 = S_trajectory.shape
         HN_theta_trajectory = torch.zeros((M, N_plus_1), dtype=torch.float32, device=self.device)
