@@ -57,7 +57,7 @@ def validate_config(config: Dict[str, Any]) -> None:
     """Validate configuration parameters."""
     n_inst = config["instruments"]["n_hedging_instruments"]
     
-    if n_inst < 1 or n_inst > 3:
+    if n_inst < 1 or n_inst > 4:
         raise ValueError(f"n_hedging_instruments must be 1, 2, or 3, got {n_inst}")
     
     if n_inst > 1:
