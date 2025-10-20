@@ -87,7 +87,7 @@ def compute_practitioner_benchmark(
             'theta': -env.side * HN_theta_1yr
         }
     else:
-        raise ValueError(f"n_hedging_instruments must be 1, 2, or 3")
+        raise ValueError(f"n_hedging_instruments must be 1, 2, 3 or 4")
     
     # Compute optimal HN positions
     HN_positions_all = env.compute_hn_option_positions(S_traj, portfolio_greeks)
@@ -280,7 +280,7 @@ def plot_episode_results(
     axes[2, 1].set_xlabel("Terminal Hedge Error", fontsize=11)
     axes[2, 1].set_ylabel("Frequency", fontsize=11)
     
-    greek_labels = {1: 'Delta', 2: 'Delta-Gamma', 3: 'Delta-Gamma-Vega'}
+    greek_labels = {1: 'Delta', 2: 'Delta-Gamma', 3: 'Delta-Gamma-Vega', 4: 'Delta-Gamma-Vega-Theta'}
     title_text = (f"Episode {episode} - {n_inst} Instruments ({greek_labels[n_inst]})\n"
                 f"RL: MSE={rl_metrics['mse']:.4f} | SMSE={rl_metrics['smse']:.6f} | CVaR95={rl_metrics['cvar_95']:.4f}\n"
                 f"HN: MSE={mse_hn:.4f} | SMSE={smse_hn:.6f} | CVaR95={cvar_95_hn:.4f}")
