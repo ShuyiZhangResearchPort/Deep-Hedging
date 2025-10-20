@@ -27,6 +27,8 @@ def compute_practitioner_benchmark(
     O_traj: Dict[int, torch.Tensor],
     n_hedging_instruments: int
 ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], np.ndarray]:
+    logger.info(f"DEBUG: S_traj type={type(S_traj)}, shape={S_traj.shape if hasattr(S_traj, 'shape') else 'no shape'}")
+    logger.info(f"DEBUG: n_hedging_instruments={n_hedging_instruments}")
     """
     Compute the practitioner (Heston-Nandi) benchmark hedge.
     
