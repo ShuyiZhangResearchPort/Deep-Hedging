@@ -57,9 +57,7 @@ Deep-Hedging/
 
 ## Configuration
 
-Two configuration templates are provided:
-- **configDGTC.yaml** — Delta-Gamma hedging with transaction costs
-- **configDGVTC.yaml** — Delta-Gamma-Vega hedging with transaction costs
+A few configuration templates are provided, where the letters after Config represent the abbreviated greeks and TC represents if transaction costs are utilized.
 
 ## Models
 
