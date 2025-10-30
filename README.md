@@ -32,10 +32,10 @@ Visual comparisons of hedging performance across different Greek strategies:
 ```
 Deep-Hedging/
 ├── cfgs/                          # Configuration files
-│   ├── configDGTC.yaml            # Delta-Gamma with transaction costs
+│   ├── configDTC.yaml             # Delta with transaction costs
 │   ├── configDGVTC.yaml           # Delta-Gamma-Vega with transaction costs
 │   ├── configDGVTTC.yaml          # Delta-Gamma-Vega-Theta with transaction costs
-│   └── configDTC.yaml             # Delta with transaction costs
+│   └── configDGTC.yaml            # Delta-Gamma with transaction costs
 │    
 ├── models/                        # Pre-trained model weights
 │   ├── non-uniform/
