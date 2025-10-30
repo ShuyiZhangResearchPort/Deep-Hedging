@@ -15,6 +15,19 @@ python train.py --config cfgs/<config_name>
 pip install torch numpy numba
 ```
 
+## Results
+
+Visual comparisons of hedging performance across different Greek strategies:
+
+### Delta Hedging
+![Delta Hedging Results](visual-results/D.png)
+
+### Delta-Gamma Hedging
+![Delta-Gamma Hedging Results](visual-results/DG.png)
+
+### Delta-Gamma-Vega Hedging
+![Delta-Gamma-Vega Hedging Results](visual-results/DGV.png)
+
 ## File Structure
 ```
 Deep-Hedging/
