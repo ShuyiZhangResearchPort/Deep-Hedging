@@ -1,6 +1,7 @@
 # Deep-Hedging
 
-A reinforcement learning framework for computing optimal dynamic hedging strategies on option portfolios. The agent learns to rebalance a portfolio of stocks, bonds, and options at each time step to minimize Greeks (delta, gamma, vega) subject to transaction costs.
+A reinforcement learning framework for computing optimal dynamic hedging strategies on option portfolios. The agent learns to rebalance a portfolio of stocks, bonds, and options at each time step to minimize Greeks (delta, gamma, vega, theta) subject to transaction costs.
+
 The simulation scheme utilized is the GARCH(1, 1) model under Heston-Nandi parameters (Can be adjusted).
 As a result, option prices and greeks are calculated under the Heston-Nandi framework as well.
 
@@ -19,8 +20,10 @@ pip install torch numpy numba
 Deep-Hedging/
 ├── cfgs/                          # Configuration files
 │   ├── configDGTC.yaml            # Delta-Gamma with transaction costs
-│   └── configDGVTC.yaml           # Delta-Gamma-Vega with transaction costs
-│
+│   ├── configDGVTC.yaml           # Delta-Gamma-Vega with transaction costs
+│   ├── configDGVTTC.yaml          # Delta-Gamma-Vega-Theta with transaction costs
+│   └── configDTC.yaml             # Delta with transaction costs
+│    
 ├── models/                        # Pre-trained model weights
 │   ├── non-uniform/
 │   │   └── GBMLSTM_T.pth
@@ -57,7 +60,13 @@ Deep-Hedging/
 
 ## Configuration
 
-A few configuration templates are provided, where the letters after Config represent the abbreviated greeks and TC represents if transaction costs are utilized.
+Configuration templates are provided in the `cfgs/` directory:
+- **configDTC.yaml** — Delta hedging with transaction costs
+- **configDGTC.yaml** — Delta-Gamma hedging with transaction costs
+- **configDGVTC.yaml** — Delta-Gamma-Vega hedging with transaction costs
+- **configDGVTTC.yaml** — Delta-Gamma-Vega-Theta hedging with transaction costs
+
+The letters after "config" represent the abbreviated Greeks (D=Delta, G=Gamma, V=Vega, T=Theta), and "TC" indicates that transaction costs are included in the optimization.
 
 ## Models
 
