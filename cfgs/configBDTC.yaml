@@ -1,5 +1,5 @@
 # ==============================================================================
-# config_vanilla_1inst.yaml - Delta Hedging Only (Stock only)
+# config_barrier_1inst.yaml - Barrier Option Delta Hedging (Stock only)
 # ==============================================================================
 training:
   learning_rate: 0.0001
@@ -7,7 +7,7 @@ training:
   num_epochs: 400
   weight_decay: 0.00001
   optimizer: "AdamW"
-  episodes: 400
+  episodes: 300
   seed: 78020349
   gamma: 0.9999
   entropy_coefficient: 0.5
@@ -23,37 +23,40 @@ garch:
   gamma: 342.870019
   lambda: 0.420499
   sigma0: 0.127037
+  h0: 5.14e-07  # Initial variance for barrier option
 
 instruments:
   n_hedging_instruments: 1
   strikes: []
   types: []
   maturities: []  # FIXED: Empty (no hedging options, just stock)
+
+hedged_option:
+  type: "barrier"
+  K: 100
+  T: 1.0  # Hedged option maturity (252 days)
+  option_type: "call"
+  side: "short"
+  barrier_level: 105.0
+  barrier_type: "up-and-in"
+  model_path: "models/barrier/best_finetuned_up-and-in_call.1.pth"
 transaction_costs:
     stock: 0.0001
     vanilla_option: 0.001
     barrier_option: 0.002
-hedged_option:
-  type: "vanilla"
-  K: 100
-  T: 1.0  # ADDED: Hedged option maturity (252 days)
-  option_type: "call"
-  side: "short"
-
 simulation:
   S0: 100
-  r: 0.042
+  r: 0.1342
   T: 1.0
   contract_size: 1
   M: 1000
   N: 252
-  TCP: 0.0005
 
 environment:
   dt_min: 1.0e-10
 
 precomputation:
-  N_quad: 256
+  N_quad: 128
   u_max: 500.0
   device: "cpu"
 
@@ -68,8 +71,8 @@ logging:
   log_file: null
 
 output:
-  model_save_path: "policy_net_vanilla_1inst.pth"
-  checkpoint_path: "policy_net_vanilla_1inst.pth"
-  plot_save_path: "hedge_comparison_vanilla_1inst_ep{episode}.png"
+  model_save_path: "policy_net_barrier_1inst.pth"
+  checkpoint_path: "policy_net_barrier_1inst.pth"
+  plot_save_path: "hedge_comparison_barrier_1inst_ep{episode}.png"
   plot_dpi: 150
   sample_path_index: 1
